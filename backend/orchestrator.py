@@ -14,7 +14,7 @@ import openai
 
 import settings
 from arena_client import ArenaClient, build_prompt
-from artifact_extractor import extract_artifacts
+from artifact_extractor import count_unnamed_blocks, extract_artifacts
 
 LOG_LIMIT = 500
 HINT_503 = "check that the arena2api Chrome tab is open and pushing tokens"
@@ -102,7 +102,8 @@ async def run_job(db, job_id: str) -> None:
                     await append_log(db, job_id, "error", f"Job stopped - steps {idx + 1}-{len(steps)} left pending")
                 return
 
-            artifacts, unnamed = extract_artifacts(response)
+            artifacts = [{"path": p, "content": c} for p, c in extract_artifacts(response).items()]
+            unnamed = count_unnamed_blocks(response)
             replaced = [f"{a['path']} (from step {files[a['path']]})" for a in artifacts if a["path"] in files]
             for a in artifacts:
                 files[a["path"]] = idx

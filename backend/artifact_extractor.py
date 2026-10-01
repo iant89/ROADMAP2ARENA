@@ -1,53 +1,53 @@
 """Extract file artifacts from a model response.
 
-A fenced block is a named file when its info string is "lang:path"
-(```python:src/main.py) or, failing that, when its first line is a path
-comment ("# filename: x", "// filename: x", "<!-- path: x -->"; the comment
-line is dropped from the content). Other blocks are unnamed: they stay in the
-transcript and are never stored as artifacts or zipped.
+The core matching (BLOCK_RE, PATH_COMMENT_RE, extract_artifacts) follows the
+spec exactly: a fenced block is a named file when its info string is
+"lang:path" (```python:src/main.py) or, failing that, when its first line is a
+path comment ("# filename: x", "// file: x", "<!-- path: x"); the comment line
+is dropped from the content. Other blocks are unnamed: they stay in the
+transcript only and are never stored as artifacts or zipped.
 """
 from __future__ import annotations
 
 import re
 from pathlib import PurePosixPath
 
-BLOCK_RE = re.compile(r"^[ \t]*```([^\n`]*)\n(.*?)^[ \t]*```[ \t]*$", re.MULTILINE | re.DOTALL)
+BLOCK_RE = re.compile(
+    r"```(?:\w+)?(?::(?P<path1>[^\s`]+))?\s*\n"
+    r"(?P<body>.*?)```",
+    re.DOTALL,
+)
 PATH_COMMENT_RE = re.compile(
-    r"^\s*(?:#|//|<!--)\s*(?:filename|file|path)\s*:\s*(?P<path>\S.*?)\s*(?:-->)?\s*$",
-    re.IGNORECASE,
+    r"^(?:#|//|<!--)\s*(?:file(?:name)?|path)\s*:\s*(?P<path2>[^\s>]+)"
 )
 
 
-def extract_blocks(response: str) -> list[dict]:
-    """Return every fenced block as {lang, path|None, content}."""
-    blocks = []
-    for m in BLOCK_RE.finditer((response or "").replace("\r\n", "\n")):
-        info = m.group(1).strip()
-        body = m.group(2)
-        if body.endswith("\n"):
-            body = body[:-1]
-        lang, _, path = info.partition(":")
-        if path.strip():
-            blocks.append({"lang": lang or "text", "path": path.strip(), "content": body})
+def extract_artifacts(response: str) -> dict[str, str]:
+    artifacts = {}
+    for m in BLOCK_RE.finditer(response):
+        path = m.group("path1")
+        body = m.group("body")
+        if not path:
+            first_line = body.split("\n", 1)[0]
+            cm = PATH_COMMENT_RE.match(first_line.strip())
+            if cm:
+                path = cm.group("path2")
+                body = body.split("\n", 1)[1] if "\n" in body else ""
+        if path:
+            artifacts[path] = body.rstrip() + "\n"
+    return artifacts
+
+
+def count_unnamed_blocks(response: str) -> int:
+    """Number of fenced blocks that extract_artifacts would ignore (for the job log)."""
+    unnamed = 0
+    for m in BLOCK_RE.finditer(response):
+        if m.group("path1"):
             continue
-        first, _, rest = body.partition("\n")
-        c = PATH_COMMENT_RE.match(first)
-        if c:
-            blocks.append({"lang": info or "text", "path": c.group("path"), "content": rest})
-        else:
-            blocks.append({"lang": info or "text", "path": None, "content": body})
-    return blocks
-
-
-def extract_artifacts(response: str) -> tuple[list[dict], int]:
-    """Return ([{path, content}], unnamed_count). Last block wins within a response."""
-    blocks = extract_blocks(response)
-    named: dict[str, str] = {}
-    for b in blocks:
-        if b["path"]:
-            named[b["path"]] = b["content"]
-    unnamed = sum(1 for b in blocks if not b["path"])
-    return [{"path": p, "content": c} for p, c in named.items()], unnamed
+        first_line = m.group("body").split("\n", 1)[0]
+        if not PATH_COMMENT_RE.match(first_line.strip()):
+            unnamed += 1
+    return unnamed
 
 
 def clean_zip_path(raw: str) -> tuple[str | None, str | None]:
