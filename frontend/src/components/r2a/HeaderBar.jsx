@@ -1,9 +1,7 @@
-import { Download, FlaskConical, History, Route } from 'lucide-react'
+import { Download, History, Route } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { MOCK_MODE_NOTICE } from '@/mock'
 import { StatusChip } from './status'
 
 export default function HeaderBar({ job, onDownload, downloading, onOpenRecent }) {
@@ -40,14 +38,6 @@ export default function HeaderBar({ job, onDownload, downloading, onOpenRecent }
         </div>
 
         <div className="flex items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="hidden items-center gap-1.5 rounded-full border border-amber/40 bg-amber-soft px-2.5 py-1 text-xs font-medium text-amber md:inline-flex" data-testid="mock-mode-badge">
-                <FlaskConical className="size-3.5" /> Mock mode
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>{MOCK_MODE_NOTICE}</TooltipContent>
-          </Tooltip>
           <Button variant="outline" size="lg" onClick={onOpenRecent} data-testid="recent-jobs-button" className="px-3 hover:-translate-y-px">
             <History /> Recent jobs
           </Button>
@@ -64,10 +54,6 @@ export default function HeaderBar({ job, onDownload, downloading, onOpenRecent }
             <Download /> {downloading ? 'Packing...' : 'Download ZIP'}
           </Button>
         </div>
-      </div>
-      <div className="flex items-center gap-2 border-t border-amber/25 bg-amber-soft px-5 py-1.5 text-xs font-medium text-amber lg:px-8" data-testid="mock-mode-banner">
-        <FlaskConical className="size-3.5 shrink-0" />
-        {MOCK_MODE_NOTICE}
       </div>
     </header>
   )

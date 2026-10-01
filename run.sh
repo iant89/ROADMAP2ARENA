@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Local development: backend (if present) on 127.0.0.1:8001 and Vite on 5173.
-# Ctrl+C stops both.
+# Optional: STUB=1 also starts the local arena2api stand-in on 127.0.0.1:9090
+# (backend/tests/arena_stub.py - NOT the real arena2api). Ctrl+C stops all.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 
@@ -16,9 +17,18 @@ trap cleanup INT TERM EXIT
 
 if [ -f backend/server.py ]; then
   [ -x venv/bin/uvicorn ] || { echo "venv/bin/uvicorn missing - run ./setup.sh or create ./venv first" >&2; exit 1; }
+  [ -f backend/.env ] || { echo "backend/.env missing - copy backend/.env.example and adjust" >&2; exit 1; }
+  if ! (exec 3<>/dev/tcp/127.0.0.1/27017) 2>/dev/null; then
+    echo "warning: nothing listening on 127.0.0.1:27017 - start MongoDB first" >&2
+  fi
+  if [ "${STUB:-0}" = "1" ]; then
+    (cd backend && exec ../venv/bin/uvicorn tests.arena_stub:app --host 127.0.0.1 --port 9090) &
+    PIDS+=("$!")
+    echo "arena2api stub: http://127.0.0.1:9090"
+  fi
   (cd backend && exec ../venv/bin/uvicorn server:app --host 127.0.0.1 --port 8001 --reload) &
   PIDS+=("$!")
-  echo "backend:  http://127.0.0.1:8001"
+  echo "backend:  http://127.0.0.1:8001/api"
 else
   echo "backend/server.py not found - starting frontend only"
 fi

@@ -2,13 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { getJob } from '@/lib/api'
 
-const POLL_MS = 400
+const POLL_MS = 1500
 
-// Loads a job by id and polls it while it is running. Fires toasts when a job
-// observed as running in this session finishes or fails.
+// Loads a job by id and polls GET /api/jobs/{id} every 1.5 s while it runs.
+// Transient errors keep the last known state and retry on the next tick.
+// Toasts fire when a job observed as running in this session finishes or fails.
 export function useJob(jobId) {
   const [job, setJob] = useState(null)
+  const [error, setError] = useState(null)
   const lastStatus = useRef({})
+  const errorToastShown = useRef(false)
 
   const refresh = useCallback(async () => {
     if (!jobId) return null
@@ -21,17 +24,25 @@ export function useJob(jobId) {
         toast.error(`Step ${next.failed_step ?? '?'} failed`, { description: next.error })
       }
       lastStatus.current[jobId] = next.status
+      errorToastShown.current = false
+      setError(null)
       setJob(next)
       return next
     } catch (err) {
-      toast.error('Could not load job', { description: err.message })
-      return null
+      setError(err.message)
+      if (!errorToastShown.current) {
+        errorToastShown.current = true
+        toast.error('Lost contact with the backend', { description: `${err.message} - retrying automatically` })
+      }
+      if (err.status === 404) return { status: 'missing' }
+      return { status: lastStatus.current[jobId] || 'running' }
     }
   }, [jobId])
 
   useEffect(() => {
     if (!jobId) {
       setJob(null)
+      setError(null)
       return undefined
     }
     let timer
@@ -47,5 +58,5 @@ export function useJob(jobId) {
     }
   }, [jobId, refresh])
 
-  return { job, refresh }
+  return { job, error, refresh }
 }

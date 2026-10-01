@@ -111,6 +111,10 @@ for dir in backend frontend; do
     echo "$dir/.env already exists (left unchanged)"
   fi
 done
+if [ -f backend/.env ] && grep -q '^DB_NAME=your_db_name$' backend/.env; then
+  sed -i "s|^DB_NAME=your_db_name$|DB_NAME=${APP_NAME//[^A-Za-z0-9_]/_}|" backend/.env
+  echo "backend/.env: DB_NAME placeholder replaced"
+fi
 if [ -f frontend/.env ]; then
   if grep -q '^VITE_BACKEND_URL=' frontend/.env; then
     sed -i "s|^VITE_BACKEND_URL=.*|VITE_BACKEND_URL=${APP_URL}|" frontend/.env

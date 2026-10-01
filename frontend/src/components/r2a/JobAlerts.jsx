@@ -12,8 +12,8 @@ export default function JobAlerts({ job, onDownload }) {
           Step {job.failed_step ?? '?'} failed{job.failed_step ? ` - ${job.steps[job.failed_step - 1]?.title}` : ''}
         </AlertTitle>
         <AlertDescription className="space-y-1.5 text-[13px] text-foreground/85">
-          <p className="font-mono text-[12px] break-words">{job.error}</p>
-          {job.error_hint && <p className="font-medium text-coral">Hint: {job.error_hint}</p>}
+          <p className="font-mono text-[12px] break-words" data-testid="job-error-text">{(job.error || '').replace(/^Step \d+ failed: /, '')}</p>
+          {job.error_hint && !/Chrome tab/i.test(job.error || '') && <p className="font-medium text-coral">Hint: {job.error_hint}</p>}
           <p className="text-muted-foreground">Later steps were left pending. Files from completed steps can still be downloaded.</p>
         </AlertDescription>
       </Alert>

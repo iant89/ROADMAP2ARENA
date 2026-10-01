@@ -8,19 +8,24 @@ import HeaderBar from '@/components/r2a/HeaderBar'
 import LeftPane from '@/components/r2a/LeftPane'
 import WorkspaceTabs from '@/components/r2a/WorkspaceTabs'
 import RecentJobsSheet from '@/components/r2a/RecentJobsSheet'
-import { downloadZip, getConfig, getJob, parseRoadmap, startJob } from '@/lib/api'
+import { backendUrl, downloadZip, getConfig, getJob, parseRoadmap, startJob } from '@/lib/api'
 import { useJob } from '@/hooks/useJob'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
-import { SAMPLE_PROJECT_CONTEXT, SAMPLE_ROADMAP } from '@/mock'
+import { SAMPLE_PROJECT_CONTEXT, SAMPLE_ROADMAP } from '@/constants/sampleRoadmap'
+import BackendBanner from '@/components/r2a/BackendBanner'
 
-const EMPTY_FORM = { arena_url: '', model: '', step_delay_seconds: 2, project_context: '', roadmap_md: '' }
+const EMPTY_FORM = { arena_url: '', model: '', project_context: '', roadmap_md: '' }
+const PARSE_DEBOUNCE_MS = 250
 
 export default function App() {
   const isDesktop = useMediaQuery('(min-width: 1024px)')
   const [form, setForm] = useState(EMPTY_FORM)
   const [steps, setSteps] = useState([])
   const [activeJobId, setActiveJobId] = useState(null)
-  const { job, refresh } = useJob(activeJobId)
+  const { job, error: jobError, refresh } = useJob(activeJobId)
+  const [configError, setConfigError] = useState(null)
+  const [configAttempt, setConfigAttempt] = useState(0)
+  const [parseError, setParseError] = useState(null)
   const [starting, setStarting] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [formExpanded, setFormExpanded] = useState(false)
@@ -29,15 +34,28 @@ export default function App() {
   const [selectedPath, setSelectedPath] = useState(null)
   const jobRunning = job?.status === 'running'
 
+  // Defaults come from GET /api/config; only fill fields the user has not typed in.
   useEffect(() => {
-    getConfig().then((cfg) => setForm((f) => ({ ...f, ...cfg })))
-  }, [])
+    let alive = true
+    getConfig()
+      .then((cfg) => {
+        if (!alive) return
+        setConfigError(null)
+        setForm((f) => ({ ...f, arena_url: f.arena_url || cfg.arena_url, model: f.model || cfg.model }))
+      })
+      .catch((err) => alive && setConfigError(err.message))
+    return () => { alive = false }
+  }, [configAttempt])
 
   useEffect(() => {
     let alive = true
-    parseRoadmap(form.roadmap_md).then((res) => alive && setSteps(res.steps))
-    return () => { alive = false }
-  }, [form.roadmap_md])
+    const t = setTimeout(() => {
+      parseRoadmap(form.roadmap_md)
+        .then((res) => { if (alive) { setSteps(res.steps); setParseError(null) } })
+        .catch((err) => alive && setParseError(err.message))
+    }, PARSE_DEBOUNCE_MS)
+    return () => { alive = false; clearTimeout(t) }
+  }, [form.roadmap_md, configAttempt])
 
   // Keep a file selected: follow the newest artifact while running.
   useEffect(() => {
@@ -49,6 +67,13 @@ export default function App() {
     }
   }, [job, jobRunning, selectedPath])
 
+  // Deep link: /?job=<id> reopens that job on load.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('job')
+    if (id) handlePickJob(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const handleStart = async () => {
     setStarting(true)
     try {
@@ -56,7 +81,7 @@ export default function App() {
       setSelectedPath(null)
       setFormExpanded(false)
       setActiveJobId(id)
-      toast.success('Job started', { description: `${steps.length} steps queued for ${form.model} (simulated)` })
+      toast.success('Job started', { description: `${steps.length} steps queued for ${form.model}` })
     } catch (err) {
       toast.error('Could not start job', { description: err.message })
     } finally {
@@ -75,7 +100,6 @@ export default function App() {
       setForm({
         arena_url: picked.config.arena_url,
         model: picked.config.model,
-        step_delay_seconds: picked.config.step_delay_seconds,
         project_context: picked.project_context,
         roadmap_md: picked.roadmap_md,
       })
@@ -93,8 +117,7 @@ export default function App() {
     setDownloading(true)
     try {
       const res = await downloadZip(job.id)
-      const extra = res.skipped.length ? `, ${res.skipped.length} skipped (see Log)` : ''
-      toast.success('ZIP ready', { description: `${res.filename} - ${res.included.length} files${extra}` })
+      toast.success('ZIP downloaded', { description: `${res.filename} (${Math.max(1, Math.round(res.size / 1024))} KB) - skipped paths are listed in the Log` })
     } catch (err) {
       toast.error('ZIP failed', { description: err.message })
     } finally {
@@ -125,6 +148,11 @@ export default function App() {
     <TooltipProvider delayDuration={200}>
       <div className={isDesktop ? 'flex h-dvh flex-col' : 'flex min-h-dvh flex-col'}>
         <HeaderBar job={job} onDownload={handleDownload} downloading={downloading} onOpenRecent={() => setRecentOpen(true)} />
+        <BackendBanner
+          message={configError || parseError || jobError}
+          url={backendUrl}
+          onRetry={() => { setConfigAttempt((a) => a + 1); refresh() }}
+        />
         {isDesktop ? (
           <main className="min-h-0 flex-1">
             <ResizablePanelGroup orientation="horizontal" className="h-full">

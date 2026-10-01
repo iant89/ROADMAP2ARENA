@@ -10,12 +10,16 @@
 
 ## Test Request
 
-Mock frontend (no backend). Please verify:
-- Empty state, "Load sample roadmap", live "N steps found" preview and parsed step list.
-- Starting a simulated job: steps go running -> done, artifacts/transcript/log update, Start disabled while running.
-- Recent jobs sheet: reopen the sample done job and the sample error job (failed at step 3, 503 alert).
-- Download ZIP: enabled after one step is done; unnamed blocks excluded; unsafe paths skipped and logged.
-- Mobile layout (390px wide).
+Backend integration (branch feat/backend-integration). Use the LOCAL arena2api stand-in
+(backend/tests/arena_stub.py on 127.0.0.1:9090, supervisor program arena-stub), not the real gateway.
+Please verify:
+- GET /api/config, POST /api/roadmap/parse (steps and 422 for no steps).
+- POST /api/jobs: 201, 409 while a job runs (model stub-slow), 422 for bad arena_url / empty model / empty or stepless roadmap.
+- Job runs to done; GET /api/jobs/{id} progress, steps[].artifact_paths, log; GET /steps/{index} prompt/response/artifacts; 404s.
+- 503 handling with model stub-503 or stub-503-at-N (error message + Chrome tab hint, later steps pending).
+- GET /download: latest version per path, ../evil.py skipped and logged, /abs/x.py stored as abs/x.py, 409 with no artifacts.
+- Backend restart while running marks the job "interrupted by server restart".
+- UI at http://localhost:8080: defaults from /api/config, live parse preview, running/done/error states, transcript on demand, ZIP download, Recent jobs, /?job=<id> deep link.
 
 ## Issue Tracker
 
