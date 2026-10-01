@@ -10,16 +10,20 @@
 
 ## Test Request
 
-Backend integration (branch feat/backend-integration). Use the LOCAL arena2api stand-in
-(backend/tests/arena_stub.py on 127.0.0.1:9090, supervisor program arena-stub), not the real gateway.
-Please verify:
-- GET /api/config, POST /api/roadmap/parse (steps and 422 for no steps).
-- POST /api/jobs: 201, 409 while a job runs (model stub-slow), 422 for bad arena_url / empty model / empty or stepless roadmap.
-- Job runs to done; GET /api/jobs/{id} progress, steps[].artifact_paths, log; GET /steps/{index} prompt/response/artifacts; 404s.
-- 503 handling with model stub-503 or stub-503-at-N (error message + Chrome tab hint, later steps pending).
-- GET /download: latest version per path, ../evil.py skipped and logged, /abs/x.py stored as abs/x.py, 409 with no artifacts.
-- Backend restart while running marks the job "interrupted by server restart".
-- UI at http://localhost:8080: defaults from /api/config, live parse preview, running/done/error states, transcript on demand, ZIP download, Recent jobs, /?job=<id> deep link.
+Agent: backend
+Date: 2026-10-01 19:59 ET
+Built or changed: FastAPI backend for ROADMAP2ARENA (jobs, steps, orchestrator, arena2api client, artifact extractor, ZIP), MongoDB persistence
+Key endpoints or flows: GET /api/config, POST /api/roadmap/parse, POST /api/jobs, GET /api/jobs, GET /api/jobs/{id}, GET /api/jobs/{id}/steps/{index}, GET /api/jobs/{id}/download
+Data: real backend
+Features present: sessions no (but each job has its own conversation and artifacts; jobs must never mix), auth no, integrations: arena2api via local stand-in only
+Retest: none
+Test accounts: none
+Notes:
+- arena2api is replaced by a LOCAL stand-in (backend/tests/arena_stub.py, supervisor program arena-stub) on http://127.0.0.1:9090. Magic models: stub-503 (HTTP 503 on every call), stub-503-at-3 (503 on the 3rd user turn only; any stub-503-at-N works), stub-slow (sleeps 5 s per call, for 409 testing). Any other model gets turn-based canned replies containing a lang:path block, a "# filename:" block, an unnamed block, "../evil.py" and "/abs/x.py".
+- Backend: http://127.0.0.1:8001/api directly, or via Caddy at http://localhost:8080/api (UI at http://localhost:8080). Step delay is 2 s (ARENA_STEP_DELAY_SECONDS).
+- One job at a time: POST /api/jobs returns 409 while any job is running, so tests must poll GET /api/jobs/{id} until status is done or error before starting the next job.
+- Edge cases to cover: 422 for arena_url not http/https, empty model, empty roadmap_md, roadmap with no steps (also POST /api/roadmap/parse); 409 second job; 404 unknown job and unknown step index; 409 download when a job has no artifacts; unnamed blocks never appear in artifact_paths or the ZIP; "../" paths skipped from the ZIP (and logged), absolute "/x" paths stored without the leading slash; later steps replace earlier versions of the same path in the ZIP; no "_id" in any response; ids are UUID4; timestamps are ISO 8601 UTC ending in Z; 503 error message includes the "check that the arena2api Chrome tab is open" hint and later steps stay pending; a backend restart mid-job marks it "interrupted by server restart".
+- Put test scripts in /app/backend/tests/.
 
 ## Issue Tracker
 
