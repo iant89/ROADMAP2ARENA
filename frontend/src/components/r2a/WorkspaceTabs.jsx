@@ -9,7 +9,7 @@ function Count({ n }) {
 }
 
 export default function WorkspaceTabs({ job, tab, setTab, selectedPath, setSelectedPath }) {
-  const transcriptCount = (job?.steps ?? []).filter((s) => s.prompt).length
+  const transcriptCount = (job?.steps ?? []).filter((s) => s.status !== 'pending').length
   return (
     <Tabs value={tab} onValueChange={setTab} className="flex h-full min-h-0 flex-col gap-0">
       <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">

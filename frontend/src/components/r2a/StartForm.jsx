@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronUp, FileText, Play, Sparkles } from 'lucide-react'
+import { useState } from 'react'
+import { ChevronDown, ChevronUp, CircleAlert, FileText, Play, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -6,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
 
-function Field({ id, label, hint, children }) {
+function Field({ id, label, hint, error, children }) {
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between gap-3">
@@ -14,8 +15,22 @@ function Field({ id, label, hint, children }) {
         {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
       </div>
       {children}
+      {error && (
+        <p id={`${id}-error`} role="alert" data-testid={`${id}-error`} className="r2a-rise flex items-center gap-1.5 text-xs font-medium text-coral">
+          <CircleAlert className="size-3.5 shrink-0" /> {error}
+        </p>
+      )}
     </div>
   )
+}
+
+function isHttpUrl(value) {
+  try {
+    const u = new URL(value.trim())
+    return (u.protocol === 'http:' || u.protocol === 'https:') && Boolean(u.host)
+  } catch {
+    return false
+  }
 }
 
 const inputCls = 'bg-card h-9'
@@ -23,18 +38,27 @@ const inputCls = 'bg-card h-9'
 export default function StartForm({
   form, onChange, stepCount, onStart, onLoadSample, starting, jobRunning, collapsed, expanded, onToggleExpanded,
 }) {
-  const set = (key) => (e) => onChange({ ...form, [key]: e.target.value })
-  const startDisabled = jobRunning || starting || stepCount === 0 || !form.arena_url.trim() || !form.model.trim()
+  // Inline errors appear once a field has been edited (avoids a flash before config defaults load).
+  const [touched, setTouched] = useState({})
+  const set = (key) => (e) => {
+    setTouched((t) => (t[key] ? t : { ...t, [key]: true }))
+    onChange({ ...form, [key]: e.target.value })
+  }
+  const modelError = form.model.trim() ? null : 'Model is required'
+  const urlError = !form.arena_url.trim()
+    ? 'arena2api base URL is required'
+    : isHttpUrl(form.arena_url) ? null : 'Use an http:// or https:// URL'
+  const startDisabled = jobRunning || starting || stepCount === 0 || Boolean(urlError) || Boolean(modelError)
   const open = !collapsed || expanded
 
   const fields = (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-[1.4fr_1fr]">
-        <Field id="arena_url" label="arena2api base URL">
-          <Input id="arena_url" data-testid="arena-url-input" className={cn(inputCls, 'font-mono text-[13px]')} value={form.arena_url} onChange={set('arena_url')} placeholder="http://localhost:9090" />
+        <Field id="arena_url" label="arena2api base URL" error={touched.arena_url ? urlError : null}>
+          <Input id="arena_url" data-testid="arena-url-input" aria-invalid={Boolean(touched.arena_url && urlError)} aria-describedby={touched.arena_url && urlError ? 'arena_url-error' : undefined} className={cn(inputCls, 'font-mono text-[13px]')} value={form.arena_url} onChange={set('arena_url')} placeholder="http://localhost:9090" />
         </Field>
-        <Field id="model" label="Model">
-          <Input id="model" data-testid="model-input" className={cn(inputCls, 'font-mono text-[13px]')} value={form.model} onChange={set('model')} placeholder="gpt-4o" />
+        <Field id="model" label="Model" error={touched.model ? modelError : null}>
+          <Input id="model" data-testid="model-input" aria-invalid={Boolean(touched.model && modelError)} aria-describedby={touched.model && modelError ? 'model-error' : undefined} className={cn(inputCls, 'font-mono text-[13px]')} value={form.model} onChange={set('model')} placeholder="gpt-4o" />
         </Field>
       </div>
       <Field id="project_context" label="Project context" hint="Sent with step 1">
