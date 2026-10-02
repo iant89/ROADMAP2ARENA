@@ -314,3 +314,46 @@ export async function downloadFile(jobId, path, step) {
 export async function getCloneSource(jobId) {
   return request(`/jobs/${encodeURIComponent(jobId)}/clone-source`)
 }
+
+// ---------------------------------------------------------------- notifications
+// { items: [{ id, event, job_id, title, status, step, message, url, created_at, read, deliveries }], unread_count, total }
+export async function getNotifications({ limit = 50, unread = false } = {}) {
+  const qs = new URLSearchParams({ limit: String(limit) })
+  if (unread) qs.set('unread', 'true')
+  return request(`/notifications?${qs}`)
+}
+
+export async function markNotificationRead(id) {
+  return request(`/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' })
+}
+
+export async function markAllNotificationsRead() {
+  return request('/notifications/read-all', { method: 'POST' })
+}
+
+export async function deleteNotification(id) {
+  return request(`/notifications/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export async function clearNotifications() {
+  return request('/notifications', { method: 'DELETE' })
+}
+
+// Settings never contain the SMTP password (email.password_set / password_masked instead).
+export async function getNotificationSettings() {
+  return request('/notifications/settings')
+}
+
+// Partial update; email.password: omit = keep, '' = clear, string = set.
+export async function saveNotificationSettings(patch) {
+  return request('/notifications/settings', { method: 'PUT', body: patch })
+}
+
+// Test sends use the saved settings plus optional unsaved overrides. Resolve to { ok, error, ... }.
+export async function testWebhook(overrides) {
+  return request('/notifications/test/webhook', { method: 'POST', body: overrides })
+}
+
+export async function testEmail(overrides) {
+  return request('/notifications/test/email', { method: 'POST', body: overrides })
+}

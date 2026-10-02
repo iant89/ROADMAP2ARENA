@@ -10,7 +10,9 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from pymongo import ASCENDING, DESCENDING
 
@@ -23,6 +25,8 @@ from database import db, mongo
 from orchestrator import append_log, now_iso
 from deletion_routes import router as deletion_router
 from history_routes import router as history_router
+from notification_routes import router as notification_router
+import notifier
 from queue_routes import queue_state, router as queue_router
 from roadmap_parser import parse_roadmap, roadmap_title
 
@@ -44,7 +48,11 @@ async def lifespan(_: FastAPI):
     await db.jobs.create_index([("created_at", DESCENDING)])
     await db.jobs.create_index([("status", ASCENDING), ("queue_position", ASCENDING)])
     await db.steps.create_index([("job_id", ASCENDING), ("index", ASCENDING)], unique=True)
+    await db.notifications.create_index([("id", ASCENDING)], unique=True)
+    await db.notifications.create_index([("created_at", DESCENDING)])
     await app_settings.seed(db, now_iso())
+    if notifier.on_job_finished not in orchestrator.on_job_finished:
+        orchestrator.on_job_finished.append(notifier.on_job_finished)
     stale = await db.jobs.find({"status": "running"}, {"_id": 0, "id": 1}).to_list(None)
     for job in stale:
         ts = now_iso()
@@ -67,6 +75,17 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="ROADMAP2ARENA", lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(_request, exc: RequestValidationError):
+    """Return the standard 422 shape but never echo the submitted input back (B-004).
+
+    FastAPI's default handler includes each error's raw "input", which can contain
+    secrets such as the SMTP password sent to /api/notifications/settings.
+    """
+    errors = [{k: v for k, v in err.items() if k not in ("input", "ctx")} for err in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -381,3 +400,4 @@ app.include_router(api)
 app.include_router(queue_router)
 app.include_router(history_router)
 app.include_router(deletion_router)
+app.include_router(notification_router)

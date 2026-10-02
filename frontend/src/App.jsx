@@ -12,9 +12,10 @@ import QueueTab from '@/components/r2a/QueueTab'
 import CurrentJobTab from '@/components/r2a/CurrentJobTab'
 import HistoryTab from '@/components/r2a/HistoryTab'
 import SettingsTab from '@/components/r2a/SettingsTab'
-import { backendUrl, getJob, getSettings } from '@/lib/api'
+import { backendUrl, getSettings } from '@/lib/api'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useQueue } from '@/hooks/useQueue'
+import { useNotifications } from '@/hooks/useNotifications'
 import { useUrlState } from '@/hooks/useUrlState'
 import { cn } from '@/lib/utils'
 
@@ -52,17 +53,13 @@ export default function App() {
     return () => { alive = false }
   }, [settingsAttempt])
 
-  // Global notifications from the queue poll: the running job ended (finished/failed)
-  // and the scheduler started the next job. Also refreshes the history list.
+  // Queue poll: refresh the history list when the running job ends and toast when the scheduler
+  // starts the next job. Finished/failed/stopped/queue-empty toasts come from useNotifications.
   useEffect(() => {
     if (!queue) return
     const prev = prevRunning.current
     if (prev && prev !== runningId) {
       setFinishedKey((k) => k + 1)
-      getJob(prev).then((j) => {
-        if (j.status === 'done') toast.success(`Job finished: ${j.title}`, { description: `${j.steps_done}/${j.step_total} steps done - ${j.artifacts.length} files ready for ZIP` })
-        else if (j.status === 'error') toast.error(`Step ${j.failed_step ?? '?'} failed: ${j.title}`, { description: j.error })
-      }).catch(() => {})
     }
     if (prev !== undefined && runningId && prev !== runningId) {
       toast(`Started: ${queue.running.title}`, { description: `${queue.running.step_total} steps with ${queue.running.model}` })
@@ -92,6 +89,11 @@ export default function App() {
     }
   }
 
+  const notifications = useNotifications({
+    onOpenJob: useCallback((id) => navigate('history', id), [navigate]),
+    onOpenQueue: useCallback(() => navigate('queue'), [navigate]),
+  })
+
   const openJob = useCallback((id, status) => {
     refreshQueue()
     if (status === 'running') navigate('current')
@@ -113,7 +115,7 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={200}>
       <div className={isDesktop ? 'flex h-dvh flex-col' : 'flex min-h-dvh flex-col'}>
-        <HeaderBar running={queue?.running} queueCount={queueCount} onOpenCurrent={() => navigate('current')} onOpenQueue={() => navigate('queue')} />
+        <HeaderBar running={queue?.running} queueCount={queueCount} onOpenCurrent={() => navigate('current')} onOpenQueue={() => navigate('queue')} notifications={notifications} />
         <BackendBanner
           message={settingsError || parseError || queueError}
           url={backendUrl}
