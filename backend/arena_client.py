@@ -58,6 +58,11 @@ class ArenaClient:
             max_retries=0,
         )
 
+    def add_turn(self, prompt: str, response: str) -> None:
+        """Append a finished turn (used to rebuild history when resuming a job)."""
+        self.history = [*self.history, {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": response}]
+
     async def complete(self, prompt: str) -> str:
         messages = [*self.history, {"role": "user", "content": prompt}]
         resp = await self._client.chat.completions.create(

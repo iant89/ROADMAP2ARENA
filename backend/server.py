@@ -1,7 +1,6 @@
 """ROADMAP2ARENA backend: FastAPI app, all routes under /api."""
 from __future__ import annotations
 
-import asyncio
 import io
 import logging
 import uuid
@@ -9,37 +8,42 @@ import zipfile
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 from pymongo import ASCENDING, DESCENDING
 
+import app_settings
 import orchestrator
+import scheduler
 import settings
 from artifact_extractor import clean_zip_path
+from database import db, mongo
 from orchestrator import append_log, now_iso
+from history_routes import router as history_router
+from queue_routes import queue_state, router as queue_router
 from roadmap_parser import parse_roadmap, roadmap_title
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("roadmap2arena")
 
-mongo = AsyncIOMotorClient(settings.MONGO_URL)
-db = mongo[settings.DB_NAME]
-
 INTERRUPTED = "interrupted by server restart"
 # Upper bound for step indexes in URLs; keeps values inside Mongo's 64-bit int range.
 MAX_STEP_INDEX = 100_000
-# Serialises the running-job check + insert + task start (single uvicorn process).
-_job_start_lock = asyncio.Lock()
+FINISHED = ("done", "error", "stopped", "cancelled")
+RESUMABLE = ("error", "stopped", "cancelled")
+ALL_STATUSES = ("queued", "paused", "running", "done", "error", "stopped", "cancelled")
+LIST_LIMIT_DEFAULT, LIST_LIMIT_MAX = 20, 200
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await db.jobs.create_index([("id", ASCENDING)], unique=True)
     await db.jobs.create_index([("created_at", DESCENDING)])
+    await db.jobs.create_index([("status", ASCENDING), ("queue_position", ASCENDING)])
     await db.steps.create_index([("job_id", ASCENDING), ("index", ASCENDING)], unique=True)
+    await app_settings.seed(db, now_iso())
     stale = await db.jobs.find({"status": "running"}, {"_id": 0, "id": 1}).to_list(None)
     for job in stale:
         ts = now_iso()
@@ -52,7 +56,12 @@ async def lifespan(_: FastAPI):
         await append_log(db, job["id"], "error", f"Job {INTERRUPTED}")
     if stale:
         logger.warning("marked %d running job(s) as interrupted", len(stale))
+    # Queued/paused jobs survive a restart; the worker starts the next one.
+    async with scheduler.lock:
+        await scheduler.renumber(db)
+    scheduler.start_worker(db)
     yield
+    await scheduler.stop_worker()
     mongo.close()
 
 
@@ -78,11 +87,12 @@ class JobCreate(BaseModel):
     model: str | None = None
     project_context: str = ""
     roadmap_md: str = Field(default="")
+    cloned_from: str | None = None  # source job id when submitted from "Clone job"
 
 
-def validate_job_input(body: JobCreate) -> tuple[str, str, list[dict]]:
-    arena_url = (body.arena_url if body.arena_url is not None else settings.ARENA2API_URL).strip()
-    model = (body.model if body.model is not None else settings.ARENA2API_MODEL).strip()
+def validate_job_input(body: JobCreate, cfg: dict) -> tuple[str, str, list[dict]]:
+    arena_url = (body.arena_url if body.arena_url is not None else cfg["arena_url"]).strip()
+    model = (body.model if body.model is not None else cfg["model"]).strip()
     errors = []
     parsed = urlparse(arena_url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -99,6 +109,58 @@ def validate_job_input(body: JobCreate) -> tuple[str, str, list[dict]]:
     return arena_url, model, steps
 
 
+class JobOverrides(BaseModel):
+    """Optional overrides for restart/resume (e.g. to fix a wrong model)."""
+    arena_url: str | None = None
+    model: str | None = None
+
+
+def validate_overrides(body: JobOverrides | None, job: dict) -> tuple[str, str]:
+    arena_url = (body.arena_url if body and body.arena_url is not None else job["arena_url"]).strip()
+    model = (body.model if body and body.model is not None else job["model"]).strip()
+    errors = []
+    parsed = urlparse(arena_url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        errors.append("arena_url must be an http:// or https:// URL")
+    if not model:
+        errors.append("model must not be empty")
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
+    return arena_url, model
+
+
+async def insert_job(arena_url: str, model: str, project_context: str, roadmap_md: str,
+                     steps: list[dict], restarted_from: str | None = None, cloned_from: str | None = None) -> str:
+    """Insert a job at the end of the queue. Call under scheduler.lock."""
+    job_id = str(uuid.uuid4())
+    ts = now_iso()
+    await db.jobs.insert_one({
+        "id": job_id, "status": "queued", "queue_position": await scheduler.end_position(db),
+        "queued_at": ts, "started_at": None, "created_at": ts, "updated_at": ts, "finished_at": None,
+        "arena_url": arena_url, "model": model, "project_context": project_context,
+        "roadmap_md": roadmap_md, "title": roadmap_title(roadmap_md) or steps[0]["title"],
+        "step_total": len(steps), "steps_done": 0, "error": None, "failed_step": None,
+        "stopped_step": None, "restarted_from": restarted_from, "cloned_from": cloned_from, "log": [],
+    })
+    await db.steps.insert_many([{
+        "job_id": job_id, "index": s["index"], "title": s["title"], "description": s["description"],
+        "status": "pending", "prompt": "", "response": "", "error": None, "artifacts": [],
+        "started_at": None, "finished_at": None,
+    } for s in steps])
+    if restarted_from:
+        await append_log(db, job_id, "info", f"Restart of job {restarted_from}")
+    if cloned_from:
+        await append_log(db, job_id, "info", f"Clone of job {cloned_from}")
+    await append_log(db, job_id, "info", "Added to the queue")
+    return job_id
+
+
+async def queued_note(job_id: str) -> None:
+    state = await queue_state(job_id)
+    if state["status"] == "queued":
+        await append_log(db, job_id, "info", f"Waiting in the queue at position {state['queue_position']}")
+
+
 async def get_job_or_404(job_id: str) -> dict:
     job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     if not job:
@@ -109,11 +171,9 @@ async def get_job_or_404(job_id: str) -> dict:
 # ------------------------------------------------------------------ routes
 @api.get("/config")
 async def get_config():
-    return {
-        "arena_url": settings.ARENA2API_URL,
-        "model": settings.ARENA2API_MODEL,
-        "step_delay_seconds": settings.ARENA_STEP_DELAY_SECONDS,
-    }
+    """Form defaults; same values as GET /api/settings (kept for compatibility)."""
+    cfg = await app_settings.get(db)
+    return {k: cfg[k] for k in app_settings.FIELDS}
 
 
 @api.post("/roadmap/parse")
@@ -126,32 +186,36 @@ async def parse(body: ParseRequest):
 
 @api.post("/jobs", status_code=201)
 async def create_job(body: JobCreate):
-    arena_url, model, steps = validate_job_input(body)
-    async with _job_start_lock:
-        if orchestrator.is_running() or await db.jobs.find_one({"status": "running"}, {"_id": 1}):
-            raise HTTPException(status_code=409, detail="A job is already running - wait for it to finish")
-        job_id = str(uuid.uuid4())
-        ts = now_iso()
-        await db.jobs.insert_one({
-            "id": job_id, "status": "running", "created_at": ts, "updated_at": ts, "finished_at": None,
-            "arena_url": arena_url, "model": model, "project_context": body.project_context,
-            "roadmap_md": body.roadmap_md, "title": roadmap_title(body.roadmap_md) or steps[0]["title"],
-            "step_total": len(steps), "steps_done": 0, "error": None, "failed_step": None, "log": [],
-        })
-        await db.steps.insert_many([{
-            "job_id": job_id, "index": s["index"], "title": s["title"], "description": s["description"],
-            "status": "pending", "prompt": "", "response": "", "error": None, "artifacts": [],
-            "started_at": None, "finished_at": None,
-        } for s in steps])
-        orchestrator.start(db, job_id)
-    return {"job_id": job_id}
+    arena_url, model, steps = validate_job_input(body, await app_settings.get(db))
+    if body.cloned_from is not None and not await db.jobs.find_one({"id": body.cloned_from}, {"_id": 1}):
+        raise HTTPException(status_code=422, detail=f"cloned_from: job {body.cloned_from} not found")
+    async with scheduler.lock:
+        job_id = await insert_job(arena_url, model, body.project_context, body.roadmap_md, steps,
+                                  cloned_from=body.cloned_from)
+        await scheduler.start_next_locked(db)
+        await queued_note(job_id)
+        state = await queue_state(job_id)
+    return {"job_id": job_id, **state}
+
+
+LIST_FIELDS = ("status", "created_at", "step_total", "steps_done", "title", "model", "failed_step", "stopped_step",
+               "restarted_from", "cloned_from", "queue_position", "queued_at", "started_at", "finished_at")
 
 
 @api.get("/jobs")
-async def list_jobs():
-    cursor = db.jobs.find({}, {"_id": 0, "id": 1, "status": 1, "created_at": 1, "step_total": 1,
-                               "steps_done": 1, "title": 1, "model": 1, "failed_step": 1}).sort("created_at", -1).limit(20)
-    return [{"job_id": j.pop("id"), **j} async for j in cursor]
+async def list_jobs(status: str | None = None,
+                    limit: int = Query(LIST_LIMIT_DEFAULT, ge=1, le=LIST_LIMIT_MAX)):
+    """Most recent jobs first. ?status=done,error filters (comma-separated)."""
+    query: dict = {}
+    if status is not None:
+        wanted = [s.strip() for s in status.split(",") if s.strip()]
+        bad = [s for s in wanted if s not in ALL_STATUSES]
+        if bad or not wanted:
+            raise HTTPException(status_code=422, detail=f"status must be a comma-separated list of {', '.join(ALL_STATUSES)}")
+        query["status"] = {"$in": wanted}
+    cursor = db.jobs.find(query, {"_id": 0, "id": 1, **{k: 1 for k in LIST_FIELDS}}).sort("created_at", -1).limit(limit)
+    return [{"job_id": j["id"], **{k: j.get(k) for k in LIST_FIELDS}, "paused": j["status"] == "paused"}
+            async for j in cursor]
 
 
 @api.get("/jobs/{job_id}")
@@ -163,6 +227,12 @@ async def get_job(job_id: str):
         "status": job["status"],
         "error": job.get("error"),
         "failed_step": job.get("failed_step"),
+        "stopped_step": job.get("stopped_step"),
+        "restarted_from": job.get("restarted_from"),
+        "cloned_from": job.get("cloned_from"),
+        "queue_position": job.get("queue_position"),
+        "queued_at": job.get("queued_at"),
+        "started_at": job.get("started_at"),
         "title": job.get("title"),
         "created_at": job["created_at"],
         "finished_at": job.get("finished_at"),
@@ -190,6 +260,90 @@ async def get_step(job_id: str, index: int):
     if not step:
         raise HTTPException(status_code=404, detail=f"Step {index} of job {job_id} not found")
     return step
+
+
+@api.post("/jobs/{job_id}/stop")
+async def stop_job(job_id: str):
+    job = await get_job_or_404(job_id)
+    if job["status"] != "running":
+        hint = " - remove it from the queue instead" if job["status"] in scheduler.IN_QUEUE else ""
+        raise HTTPException(status_code=409, detail=f"Job is {job['status']}, only a running job can be stopped{hint}")
+    if not await orchestrator.stop(db, job_id):
+        # No task yet/anymore. Take the start lock so a resume that already set the
+        # job running has also started its task, then decide.
+        async with scheduler.lock:
+            if orchestrator.is_running(job_id):
+                stopping = True
+            else:
+                stopping = False
+                await orchestrator.mark_stopped(db, job_id, "operator (no active task)")
+        if stopping:
+            await orchestrator.stop(db, job_id)
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0, "status": 1, "stopped_step": 1, "steps_done": 1})
+    if job["status"] != "stopped":
+        # Finished naturally (or failed) before the stop could take effect.
+        raise HTTPException(status_code=409, detail=f"Job finished as {job['status']} before it could be stopped")
+    return {"job_id": job_id, "status": job["status"], "stopped_step": job.get("stopped_step"),
+            "steps_done": job["steps_done"]}
+
+
+@api.post("/jobs/{job_id}/restart", status_code=201)
+async def restart_job(job_id: str, body: JobOverrides | None = None):
+    job = await get_job_or_404(job_id)
+    if job["status"] not in FINISHED:
+        raise HTTPException(status_code=409, detail=f"Job is {job['status']}, only a finished job can be restarted")
+    arena_url, model = validate_overrides(body, job)
+    steps = parse_roadmap(job["roadmap_md"])
+    async with scheduler.lock:
+        # One active restart per job: guards against double clicks / parallel requests.
+        active = await db.jobs.find_one({"restarted_from": job_id, "status": {"$in": ["queued", "paused", "running"]}},
+                                        {"_id": 0, "id": 1, "status": 1})
+        if active:
+            raise HTTPException(status_code=409, detail=f"A restart of this job is already {active['status']} (job {active['id']})")
+        new_id = await insert_job(arena_url, model, job.get("project_context", ""), job["roadmap_md"], steps,
+                                  restarted_from=job_id)
+        await scheduler.start_next_locked(db)
+        await queued_note(new_id)
+        state = await queue_state(new_id)
+    return {"job_id": new_id, **state}
+
+
+@api.post("/jobs/{job_id}/resume")
+async def resume_job(job_id: str, body: JobOverrides | None = None):
+    job = await get_job_or_404(job_id)
+    if job["status"] not in RESUMABLE:
+        raise HTTPException(status_code=409, detail=f"Job is {job['status']}, only an error, stopped or cancelled job can be resumed")
+    arena_url, model = validate_overrides(body, job)
+    async with scheduler.lock:
+        current = await db.jobs.find_one({"id": job_id}, {"_id": 0, "status": 1})
+        if current["status"] not in RESUMABLE:  # e.g. a parallel resume already queued it
+            raise HTTPException(status_code=409, detail=f"Job is {current['status']}, only an error, stopped or cancelled job can be resumed")
+        first = await db.steps.find_one({"job_id": job_id, "status": {"$ne": "done"}}, {"_id": 0, "index": 1},
+                                        sort=[("index", 1)])
+        if not first:
+            raise HTTPException(status_code=409, detail="All steps are already done - nothing to resume")
+        k = first["index"]
+        ts = now_iso()
+        await db.steps.update_many({"job_id": job_id, "index": {"$gte": k}}, {"$set": {
+            "status": "pending", "prompt": "", "response": "", "artifacts": [], "error": None,
+            "started_at": None, "finished_at": None,
+        }})
+        done = await db.steps.count_documents({"job_id": job_id, "status": "done"})
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "status": "queued", "queue_position": await scheduler.end_position(db), "queued_at": ts,
+            "error": None, "failed_step": None, "stopped_step": None, "finished_at": None,
+            "arena_url": arena_url, "model": model, "steps_done": done, "updated_at": ts,
+        }})
+        changes = []
+        if arena_url != job["arena_url"]:
+            changes.append(f"arena_url {job['arena_url']} -> {arena_url}")
+        if model != job["model"]:
+            changes.append(f"model {job['model']} -> {model}")
+        await append_log(db, job_id, "info", f"Resumed from step {k}" + (f" ({'; '.join(changes)})" if changes else ""))
+        await scheduler.start_next_locked(db)
+        await queued_note(job_id)
+        state = await queue_state(job_id)
+    return {"job_id": job_id, **state, "resumed_from_step": k}
 
 
 @api.get("/jobs/{job_id}/download")
@@ -223,3 +377,5 @@ async def download(job_id: str):
 
 
 app.include_router(api)
+app.include_router(queue_router)
+app.include_router(history_router)

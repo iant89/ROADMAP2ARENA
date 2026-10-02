@@ -3,13 +3,16 @@ import { toast } from 'sonner'
 import { getJob } from '@/lib/api'
 
 const POLL_MS = 1500
+const LIVE = ['running', 'queued', 'paused']
 
-// Loads a job by id and polls GET /api/jobs/{id} every 1.5 s while it runs.
+// Loads a job by id and polls GET /api/jobs/{id} every 1.5 s while it is running,
+// queued or paused (a queued job starts on its own when its turn comes).
 // Transient errors keep the last known state and retry on the next tick.
-// Toasts fire when a job observed as running in this session finishes or fails.
+// Finish/fail toasts are global (App, from the queue poll), not per view.
 export function useJob(jobId) {
   const [job, setJob] = useState(null)
   const [error, setError] = useState(null)
+  const [pollKey, setPollKey] = useState(0)
   const lastStatus = useRef({})
   const errorToastShown = useRef(false)
 
@@ -17,12 +20,6 @@ export function useJob(jobId) {
     if (!jobId) return null
     try {
       const next = await getJob(jobId)
-      const prev = lastStatus.current[jobId]
-      if (prev === 'running' && next.status === 'done') {
-        toast.success('Job finished', { description: `${next.steps_done}/${next.step_total} steps done - ${next.artifacts.length} files ready for ZIP` })
-      } else if (prev === 'running' && next.status === 'error') {
-        toast.error(`Step ${next.failed_step ?? '?'} failed`, { description: next.error })
-      }
       lastStatus.current[jobId] = next.status
       errorToastShown.current = false
       setError(null)
@@ -49,14 +46,17 @@ export function useJob(jobId) {
     let alive = true
     const tick = async () => {
       const next = await refresh()
-      if (alive && next?.status === 'running') timer = setTimeout(tick, POLL_MS)
+      if (alive && LIVE.includes(next?.status)) timer = setTimeout(tick, POLL_MS)
     }
     tick()
     return () => {
       alive = false
       clearTimeout(timer)
     }
-  }, [jobId, refresh])
+  }, [jobId, refresh, pollKey])
 
-  return { job, error, refresh }
+  // Call after an action that sets the job running again (e.g. resume).
+  const restartPolling = useCallback(() => setPollKey((k) => k + 1), [])
+
+  return { job, error, refresh, restartPolling }
 }
