@@ -21,7 +21,15 @@ import zipfile
 import httpx
 
 BASE = os.environ.get("TEST_BASE_URL", "http://127.0.0.1:8001").rstrip("/") + "/api"
-PROXY = "http://localhost:8080/api"
+PROXY = os.environ.get("TEST_PROXY_URL", "http://localhost:8080/api")
+# Running against a private backend (isolated_server sets R2A_TEST_ISOLATED, or TEST_BASE_URL points
+# elsewhere than the dev backend): the Caddy proxy check would hit the shared :8080 stack - skip it.
+ISOLATED = os.environ.get("R2A_TEST_ISOLATED") == "1" or (
+    "TEST_BASE_URL" in os.environ and not BASE.startswith(("http://127.0.0.1:8001", "http://localhost:8001")))
+
+
+class SkipTest(Exception):
+    """Raised by a test that does not apply in this environment (the runner prints SKIP)."""
 STUB = os.environ.get("TEST_STUB_URL", "http://127.0.0.1:9090")
 SUFFIX = secrets.token_hex(3)
 CREATED: list[str] = []
@@ -101,6 +109,8 @@ def test_config():
 
 
 def test_proxy_routing():
+    if ISOLATED and "TEST_PROXY_URL" not in os.environ:
+        raise SkipTest("isolated run - not touching the shared :8080 proxy (set TEST_PROXY_URL to force)")
     r = httpx.get(f"{PROXY}/config", timeout=10)
     assert r.status_code == 200 and "arena_url" in r.json()
 

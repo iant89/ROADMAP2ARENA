@@ -12,6 +12,7 @@ import asyncio
 import os
 import re
 import subprocess
+import tempfile
 
 AUTHOR_NAME = "ROADMAP2ARENA"
 AUTHOR_EMAIL = "roadmap2arena@localhost"
@@ -71,7 +72,17 @@ async def aout(cwd: str | None, *args: str, **kw) -> str:
 
 
 def valid_branch(name: str) -> bool:
-    """True if `name` is a valid, unambiguous branch name (git check-ref-format --branch)."""
-    if not name or len(name) > 200 or name.startswith("-") or any(c.isspace() for c in name):
+    """True if `name` is a valid, unambiguous branch name.
+
+    Reflog/previous-branch syntax ("@{-1}", "main@{u}", a bare "@") is rejected outright: with
+    `check-ref-format --branch` git expands it against the repository in the current directory
+    (the backend's own checkout), so it must never reach git. The name is checked as
+    refs/heads/<name> with --normalize in an empty temp dir and must already be normalised.
+    """
+    if (not name or len(name) > 200 or name.startswith("-") or any(c.isspace() for c in name)
+            or "@{" in name or name in ("@", "HEAD")):
         return False
-    return run(None, "check-ref-format", "--branch", name, check=False).returncode == 0
+    ref = f"refs/heads/{name}"
+    with tempfile.TemporaryDirectory(prefix="r2a-refcheck-") as tmp:
+        proc = run(tmp, "check-ref-format", "--normalize", ref, check=False)
+    return proc.returncode == 0 and proc.stdout.decode("utf-8", "replace").strip() == ref

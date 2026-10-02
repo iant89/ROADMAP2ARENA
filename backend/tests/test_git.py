@@ -168,6 +168,23 @@ def test_structured_diff_and_compare():
     assert C.get(f"{BASE}/jobs/nope/git/compare", params={"head": last["sha"]}).status_code == 404
 
 
+def test_valid_branch_unit():
+    """B-006: reflog / previous-branch syntax never reaches git; names are checked as refs/heads/<name>."""
+    import git_cli
+    for good in ("main", "r2a/job-1234abcd", "feature/x-y_z.1", "UPPER", "a/b/c"):
+        assert git_cli.valid_branch(good), good
+    for bad in ("@{-1}", "@{-2}", "@", "main@{u}", "x@{1}", "a//b", "a/./b", "x.lock", "a..b", "/lead",
+                "trail/", "a\\b", "-x", "a b", "", "a" * 201, "HEAD", "HEAD:x", "a~1", "a^", "q?", "*"):
+        assert not git_cli.valid_branch(bad), bad
+    # independent of the current directory (used to expand @{-N} against the backend's own checkout)
+    here = os.getcwd()
+    try:
+        os.chdir(os.path.dirname(os.path.abspath(__file__)))
+        assert not git_cli.valid_branch("@{-1}") and git_cli.valid_branch("main")
+    finally:
+        os.chdir(here)
+
+
 def test_git_diff_unit():
     """Renames, binary files, odd file names and size caps in git_diff.diff_sync."""
     import git_cli

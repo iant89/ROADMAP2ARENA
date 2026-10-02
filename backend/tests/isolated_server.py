@@ -55,6 +55,10 @@ class IsolatedServer:
                 raise RuntimeError(f"isolated backend exited: {open(self.log_path).read()[-2000:]}")
             try:
                 if httpx.get(f"{self.base}/queue", timeout=2).status_code == 200:
+                    # suites that also hit a "direct" URL (default :8001) must use this server instead
+                    self._saved_env = {k: os.environ.get(k) for k in ("TEST_DIRECT_URL", "R2A_TEST_ISOLATED")}
+                    os.environ["TEST_DIRECT_URL"] = self.base
+                    os.environ["R2A_TEST_ISOLATED"] = "1"
                     return self.base
             except httpx.HTTPError:
                 pass
@@ -66,6 +70,11 @@ class IsolatedServer:
         return MongoClient(_env_file()["MONGO_URL"], serverSelectionTimeoutMS=5000)[self.db_name]
 
     def __exit__(self, *exc) -> None:
+        for k, v in getattr(self, "_saved_env", {}).items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:

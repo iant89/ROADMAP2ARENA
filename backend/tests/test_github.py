@@ -189,6 +189,9 @@ def test_push_new_repo():
     assert push(j, mode="new", repo_name="x.git").status_code == 422
     assert push(j, mode="new", branch="bad..branch").status_code == 422
     assert push(j, mode="new", branch="-x").status_code == 422
+    for b in ("@{-1}", "@", "main@{u}", "a//b"):  # B-006: never expanded against the backend's own repo
+        r = push(j, mode="new", branch=b)
+        assert r.status_code == 422 and "branch" in r.text.lower(), (b, r.status_code, r.text)
     r = push(j, mode="new", private=True)
     assert r.status_code == 200, r.text
     res = r.json()
@@ -590,6 +593,8 @@ def test_oauth_exclusive_with_pat():
     assert C.get(f"{BASE}/github").json()["auth_method"] == "pat"
     r = C.post(f"{BASE}/github/oauth/start")
     assert r.status_code == 409 and "personal access token" in r.json()["detail"]
+    r = C.post(f"{BASE}/github/oauth/poll")  # B-007: PAT connected, no device flow -> 409, not "connected"
+    assert r.status_code == 409 and "personal access token" in r.json()["detail"], r.text
     C.delete(f"{BASE}/github")
 
 

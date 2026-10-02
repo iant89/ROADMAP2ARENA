@@ -497,8 +497,14 @@ async def oauth_poll():
     doc = await ghc.get_doc(default_db)
     pending = (doc or {}).get("oauth_pending")
     if not pending:
-        if ghc.public(doc)["connected"]:
-            return {"status": "connected", "interval": None, "github": ghc.public(doc)}
+        info = ghc.public(doc)
+        # idempotent: a client polling once more after its device flow completed gets 200 again
+        if info["connected"] and info["auth_method"] == "oauth":
+            return {"status": "connected", "interval": None, "github": info}
+        if info["connected"]:
+            raise HTTPException(status_code=409, detail="Already connected with a personal access token"
+                                + (" from R2A_GITHUB_TOKEN in backend/.env" if info["source"] == "env" else "")
+                                + " - no OAuth sign-in in progress; disconnect first to use OAuth")
         raise HTTPException(status_code=409, detail="No OAuth sign-in in progress - start one first")
     now = time.time()
     if pending["expires_ts"] < now:
