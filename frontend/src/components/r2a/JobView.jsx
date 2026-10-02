@@ -83,15 +83,17 @@ export default function JobView({ jobId, onBack, backLabel, onOpenJob, onOpenQue
             {job.restarted_from && <span className="block">restart of <span className="font-mono">{job.restarted_from.slice(0, 8)}</span></span>}
           </p>
         </div>
-        <Button
-          size="sm"
-          onClick={actions.download}
-          disabled={!canDownload || actions.downloading}
-          data-testid="download-zip-button"
-          className={cn('hover:-translate-y-px', job.status === 'done' && 'r2a-pulse bg-teal text-white hover:bg-teal/90')}
-        >
-          <Download /> {actions.downloading ? 'Packing...' : 'Download ZIP'}
-        </Button>
+        {job.status !== 'done' && (
+          <Button
+            size="sm"
+            onClick={actions.download}
+            disabled={!canDownload || actions.downloading}
+            data-testid="download-zip-button"
+            className="hover:-translate-y-px"
+          >
+            <Download /> {actions.downloading ? 'Packing...' : 'Download ZIP'}
+          </Button>
+        )}
       </div>
 
       <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-2.5 text-[13px]" data-testid="job-inputs-summary">
@@ -106,7 +108,7 @@ export default function JobView({ jobId, onBack, backLabel, onOpenJob, onOpenQue
 
       <JobControls job={job} busy={actions.busy} onStop={actions.stop} onResume={actions.resume} onRestart={actions.restart} />
       {(job.status === 'queued' || job.status === 'paused') && <QueuedAlert job={job} onOpenQueue={onOpenQueue} />}
-      <JobAlerts job={job} onDownload={actions.download} />
+      <JobAlerts job={job} onDownload={actions.download} downloading={actions.downloading} />
       <Separator />
       <RoadmapChecklist steps={job.steps} job={job} />
     </div>

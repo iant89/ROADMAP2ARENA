@@ -121,7 +121,7 @@ export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDeskt
               <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search title, model or id" className="h-8 bg-card pl-8 text-[13px]" data-testid="history-search" />
             </div>
-            <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by status">
+            <div className="flex flex-nowrap gap-1.5 overflow-x-auto pb-1" role="group" aria-label="Filter by status" data-testid="history-filters">
               {FILTERS.map((f) => (
                 <button
                   key={f}
@@ -129,7 +129,7 @@ export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDeskt
                   onClick={() => setFilter(f)}
                   aria-pressed={filter === f}
                   data-testid={`history-filter-${f}`}
-                  className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors',
+                  className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap transition-colors',
                     filter === f ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-muted-foreground hover:text-foreground')}
                 >
                   {f === 'all' ? 'All' : STATUS_META[f].label} <span className="font-mono opacity-70">{counts[f] ?? 0}</span>

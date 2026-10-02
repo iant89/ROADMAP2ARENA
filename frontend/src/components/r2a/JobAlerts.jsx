@@ -2,7 +2,8 @@ import { Ban, CircleCheckBig, CircleStop, Download, TriangleAlert } from 'lucide
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 
-export default function JobAlerts({ job, onDownload }) {
+// When the job is done the banner carries the only Download ZIP button (the header one is hidden).
+export default function JobAlerts({ job, onDownload, downloading = false }) {
   if (!job) return null
   if (job.status === 'error') {
     return (
@@ -52,8 +53,8 @@ export default function JobAlerts({ job, onDownload }) {
         <AlertTitle className="font-semibold">All {job.step_total} steps done</AlertTitle>
         <AlertDescription className="flex flex-wrap items-center gap-3 text-[13px] text-foreground/85">
           <span>{job.artifacts.length} files are ready to download.</span>
-          <Button size="sm" onClick={onDownload} className="bg-teal text-white hover:bg-teal/90">
-            <Download /> Download ZIP
+          <Button size="sm" onClick={onDownload} disabled={downloading} className="bg-teal text-white hover:bg-teal/90" data-testid="download-zip-button">
+            <Download /> {downloading ? 'Packing...' : 'Download ZIP'}
           </Button>
         </AlertDescription>
       </Alert>

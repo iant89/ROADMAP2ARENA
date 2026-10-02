@@ -116,9 +116,9 @@ export default function SettingsTab({ onSaved }) {
           const err = errors[f.key]
           return (
             <div key={f.key} className="space-y-1.5">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <Label htmlFor={id} className="text-[13px] font-semibold">{f.label}</Label>
-                <span className="text-xs text-muted-foreground">.env default: <span className="font-mono">{String(env[f.key])}</span></span>
+              <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+                <Label htmlFor={id} className="shrink-0 text-[13px] font-semibold">{f.label}</Label>
+                <span className="min-w-0 truncate text-xs text-muted-foreground" title={String(env[f.key])} data-testid={`${id}-default`}>.env default: <span className="font-mono">{String(env[f.key])}</span></span>
               </div>
               <Input
                 id={id}

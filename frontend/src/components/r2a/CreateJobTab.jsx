@@ -40,7 +40,7 @@ export default function CreateJobTab({ form, setForm, settings, queue, onCreated
   }
 
   return (
-    <div className="mx-auto grid max-w-[1400px] gap-6 p-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] lg:p-7" data-testid="create-job-tab">
+    <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-6 p-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] lg:p-7" data-testid="create-job-tab">
       <section className="space-y-5 rounded-xl border border-border bg-card p-5 shadow-sm lg:p-6">
         <div>
           <h2 className="text-lg font-semibold tracking-tight">New job</h2>

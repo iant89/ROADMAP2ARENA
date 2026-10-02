@@ -10,37 +10,41 @@ export default function HeaderBar({ running, queueCount, onOpenCurrent, onOpenQu
 
   return (
     <header className="border-b border-border bg-card">
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-5 py-3.5 lg:px-8">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2.5 px-5 py-3 sm:gap-y-3 sm:py-3.5 lg:px-8">
         <div className="flex items-center gap-3">
           <span className="grid size-9 place-items-center rounded-lg bg-primary text-primary-foreground">
             <Route className="size-5" />
           </span>
           <div className="leading-tight">
             <h1 className="text-[15px] font-bold tracking-[0.08em]">ROADMAP2ARENA</h1>
-            <p className="text-xs text-muted-foreground">ROADMAP.md to files, one step at a time</p>
+            <p className="hidden text-xs text-muted-foreground sm:block">ROADMAP.md to files, one step at a time</p>
           </div>
         </div>
 
-        <button type="button" onClick={onOpenCurrent} className="rounded-full" aria-label="Open current job">
-          <StatusChip status={running ? 'running' : 'idle'} />
-        </button>
+        {/* Status row: chip, running job name + progress, queue size. On mobile it is one full-width row. */}
+        <div className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-0 sm:gap-6" data-testid="header-status-row">
+          <button type="button" onClick={onOpenCurrent} className="shrink-0 rounded-full" aria-label="Open current job">
+            <StatusChip status={running ? 'running' : 'idle'} />
+          </button>
 
-        <div className="flex min-w-[180px] flex-1 items-center gap-3" data-testid="job-progress">
-          {running && <span className="hidden max-w-[280px] shrink-0 truncate text-[13px] font-medium md:inline" data-testid="header-job-title">{running.title}</span>}
-          <Progress value={pct} className="h-2 bg-secondary" />
-          <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
-            {done} / {total} steps
-          </span>
+          <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3" data-testid="job-progress">
+            {running && <span className="hidden max-w-[16rem] shrink-0 truncate text-[13px] font-medium md:inline" title={running.title} data-testid="header-job-title">{running.title}</span>}
+            <Progress value={pct} className="h-2 min-w-[8rem] flex-1 bg-secondary" />
+            <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums" data-testid="header-step-count">
+              {done} / {total}<span className="hidden sm:inline"> steps</span>
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={onOpenQueue}
+            data-testid="header-queue-count"
+            aria-label={`${queueCount} queued - open job queue`}
+            className="flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground sm:px-2"
+          >
+            <ListOrdered className="size-4" /> {queueCount}<span className="hidden sm:inline">queued</span>
+          </button>
         </div>
-
-        <button
-          type="button"
-          onClick={onOpenQueue}
-          data-testid="header-queue-count"
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <ListOrdered className="size-4" /> {queueCount} queued
-        </button>
       </div>
     </header>
   )

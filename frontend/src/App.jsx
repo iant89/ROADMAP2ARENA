@@ -121,15 +121,15 @@ export default function App() {
         />
         <Tabs value={tab} onValueChange={(t) => navigate(t)} className="flex min-h-0 flex-1 flex-col gap-0">
           <div className="overflow-x-auto border-b border-border bg-card/60 px-3 py-2 lg:px-7">
-            <TabsList className="h-9 bg-secondary" data-testid="main-tabs">
-              <TabsTrigger value="create" data-testid="tab-create" className="px-3"><PlusCircle /> Create job</TabsTrigger>
-              <TabsTrigger value="queue" data-testid="tab-queue" className="px-3"><ListOrdered /> Job queue <Count n={queueCount} testId="queue-count-badge" /></TabsTrigger>
-              <TabsTrigger value="current" data-testid="tab-current" className="px-3">
-                <Activity className={cn(runningId && 'text-amber')} /> Current job
+            <TabsList className="h-9 w-full bg-secondary sm:w-fit" data-testid="main-tabs">
+              <TabsTrigger value="create" data-testid="tab-create" aria-label="Create job" className="flex-1 justify-center px-2 sm:px-3"><PlusCircle /><span className="hidden sm:inline">Create job</span></TabsTrigger>
+              <TabsTrigger value="queue" data-testid="tab-queue" aria-label="Job queue" className="flex-1 justify-center px-2 sm:px-3"><ListOrdered /><span className="hidden sm:inline">Job queue</span> <Count n={queueCount} testId="queue-count-badge" /></TabsTrigger>
+              <TabsTrigger value="current" data-testid="tab-current" aria-label="Current job" className="flex-1 justify-center px-2 sm:px-3">
+                <Activity className={cn(runningId && 'text-amber')} /><span className="hidden sm:inline">Current job</span>
                 {runningId && <span className="size-1.5 rounded-full bg-amber" aria-label="running" />}
               </TabsTrigger>
-              <TabsTrigger value="history" data-testid="tab-history" className="px-3"><History /> Job history</TabsTrigger>
-              <TabsTrigger value="settings" data-testid="tab-settings" className="px-3"><Settings /> Settings</TabsTrigger>
+              <TabsTrigger value="history" data-testid="tab-history" aria-label="Job history" className="flex-1 justify-center px-2 sm:px-3"><History /><span className="hidden sm:inline">Job history</span></TabsTrigger>
+              <TabsTrigger value="settings" data-testid="tab-settings" aria-label="Settings" className="flex-1 justify-center px-2 sm:px-3"><Settings /><span className="hidden sm:inline">Settings</span></TabsTrigger>
             </TabsList>
           </div>
           <main className={cn('min-h-0', isDesktop && 'flex-1')}>

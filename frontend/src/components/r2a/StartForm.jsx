@@ -9,9 +9,9 @@ import { cn } from '@/lib/utils'
 function Field({ id, label, hint, error, children }) {
   return (
     <div className="space-y-1.5">
-      <div className="flex items-baseline justify-between gap-3">
-        <Label htmlFor={id} className="text-[13px] font-semibold">{label}</Label>
-        {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+        <Label htmlFor={id} className="shrink-0 text-[13px] font-semibold">{label}</Label>
+        {hint && <span className="min-w-0 truncate text-xs text-muted-foreground">{hint}</span>}
       </div>
       {children}
       {error && (
@@ -32,7 +32,9 @@ function isHttpUrl(value) {
   }
 }
 
-const inputCls = 'bg-card h-9'
+// One size and font for every field (text-base on mobile avoids iOS focus zoom).
+const fieldText = 'font-mono text-base sm:text-sm'
+const inputCls = cn('bg-card h-9', fieldText)
 
 // Create job form. Submitting enqueues the job; it starts at once when nothing is running.
 export default function StartForm({ form, onChange, stepCount, onSubmit, onLoadSample, submitting, queueInfo, settings, onOpenSettings, submitLabel = 'Add to queue' }) {
@@ -57,17 +59,17 @@ export default function StartForm({ form, onChange, stepCount, onSubmit, onLoadS
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-[1.4fr_1fr]">
         <Field id="arena_url" label="arena2api base URL" error={touched.arena_url ? urlError : null}>
-          <Input id="arena_url" data-testid="arena-url-input" aria-invalid={Boolean(touched.arena_url && urlError)} aria-describedby={touched.arena_url && urlError ? 'arena_url-error' : undefined} className={cn(inputCls, 'font-mono text-[13px]')} value={form.arena_url} onChange={set('arena_url')} placeholder="http://localhost:9090" />
+          <Input id="arena_url" data-testid="arena-url-input" aria-invalid={Boolean(touched.arena_url && urlError)} aria-describedby={touched.arena_url && urlError ? 'arena_url-error' : undefined} className={inputCls} value={form.arena_url} onChange={set('arena_url')} placeholder="http://localhost:9090" />
         </Field>
         <Field id="model" label="Model" error={touched.model ? modelError : null}>
-          <Input id="model" data-testid="model-input" aria-invalid={Boolean(touched.model && modelError)} aria-describedby={touched.model && modelError ? 'model-error' : undefined} className={cn(inputCls, 'font-mono text-[13px]')} value={form.model} onChange={set('model')} placeholder="gpt-4o" />
+          <Input id="model" data-testid="model-input" aria-invalid={Boolean(touched.model && modelError)} aria-describedby={touched.model && modelError ? 'model-error' : undefined} className={inputCls} value={form.model} onChange={set('model')} placeholder="gpt-4o" />
         </Field>
       </div>
       <Field id="project_context" label="Project context" hint="Sent with step 1">
         <Textarea
           id="project_context"
           data-testid="project-context-input"
-          className="field-sizing-fixed h-20 resize-y bg-card"
+          className={cn('field-sizing-fixed h-20 resize-y bg-card', fieldText)}
           value={form.project_context}
           onChange={set('project_context')}
           placeholder="Stack, constraints, naming conventions..."
@@ -85,7 +87,7 @@ export default function StartForm({ form, onChange, stepCount, onSubmit, onLoadS
         <Textarea
           id="roadmap_md"
           data-testid="roadmap-input"
-          className="field-sizing-fixed h-60 resize-y bg-card font-mono text-[12.5px] leading-relaxed"
+          className={cn('field-sizing-fixed h-60 resize-y bg-card leading-relaxed', fieldText)}
           value={form.roadmap_md}
           onChange={set('roadmap_md')}
           placeholder={'### Project skeleton\nCreate the package layout...\n\n- [ ] Add tests'}

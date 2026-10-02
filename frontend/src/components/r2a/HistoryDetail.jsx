@@ -5,7 +5,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useJob } from '@/hooks/useJob'
 import { useJobActions } from '@/hooks/useJobActions'
-import { cn } from '@/lib/utils'
 import ArtifactsPanel from './ArtifactsPanel'
 import FullTranscript from './FullTranscript'
 import JobAlerts from './JobAlerts'
@@ -16,7 +15,7 @@ import { QueuedAlert } from './JobView'
 import { StatusChip, formatDateTime } from './status'
 
 function Count({ n }) {
-  return <span className="rounded-full bg-secondary px-1.5 font-mono text-[10.5px] text-secondary-foreground">{n}</span>
+  return <span className="hidden rounded-full bg-secondary px-1.5 font-mono sm:inline-flex text-[10.5px] text-secondary-foreground">{n}</span>
 }
 
 function JobLink({ label, id, onOpen }) {
@@ -78,30 +77,31 @@ export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueCh
             <Button size="sm" variant="outline" onClick={actions.exportTranscript} disabled={actions.exporting || !turns} data-testid="export-transcript-button">
               <FileDown /> {actions.exporting ? 'Exporting...' : 'Export transcript'}
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={actions.download}
-              disabled={job.steps_done < 1 || actions.downloading}
-              data-testid="download-zip-button"
-              className={cn(job.status === 'done' && 'border-teal/40 text-teal hover:text-teal')}
-            >
-              <Download /> {actions.downloading ? 'Packing...' : 'Download ZIP'}
-            </Button>
+            {job.status !== 'done' && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={actions.download}
+                disabled={job.steps_done < 1 || actions.downloading}
+                data-testid="download-zip-button"
+              >
+                <Download /> {actions.downloading ? 'Packing...' : 'Download ZIP'}
+              </Button>
+            )}
           </div>
         </div>
         <JobControls job={job} busy={actions.busy} onStop={actions.stop} onResume={actions.resume} onRestart={actions.restart} />
         {(job.status === 'queued' || job.status === 'paused') && <QueuedAlert job={job} onOpenQueue={onOpenQueue} />}
-        <JobAlerts job={job} onDownload={actions.download} />
+        <JobAlerts job={job} onDownload={actions.download} downloading={actions.downloading} />
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0">
         <div className="min-w-0 overflow-x-auto border-b border-border px-5 py-2.5 lg:px-7">
-          <TabsList className="h-9 bg-secondary">
-            <TabsTrigger value="transcript" data-testid="detail-tab-transcript" className="px-3"><MessagesSquare /> Transcript <Count n={turns} /></TabsTrigger>
-            <TabsTrigger value="files" data-testid="detail-tab-files" className="px-3"><FolderTree /> Files <Count n={job.artifacts.length} /></TabsTrigger>
-            <TabsTrigger value="steps" data-testid="detail-tab-steps" className="px-3"><ListChecks /> Steps <Count n={job.step_total} /></TabsTrigger>
-            <TabsTrigger value="log" data-testid="detail-tab-log" className="px-3"><ScrollText /> Log <Count n={job.log.length} /></TabsTrigger>
+          <TabsList className="grid h-9 w-full grid-cols-4 bg-secondary sm:inline-flex sm:w-fit">
+            <TabsTrigger value="transcript" data-testid="detail-tab-transcript" className="px-2 text-xs sm:px-3 sm:text-sm"><MessagesSquare /> Transcript <Count n={turns} /></TabsTrigger>
+            <TabsTrigger value="files" data-testid="detail-tab-files" className="px-2 text-xs sm:px-3 sm:text-sm"><FolderTree /> Files <Count n={job.artifacts.length} /></TabsTrigger>
+            <TabsTrigger value="steps" data-testid="detail-tab-steps" className="px-2 text-xs sm:px-3 sm:text-sm"><ListChecks /> Steps <Count n={job.step_total} /></TabsTrigger>
+            <TabsTrigger value="log" data-testid="detail-tab-log" className="px-2 text-xs sm:px-3 sm:text-sm"><ScrollText /> Log <Count n={job.log.length} /></TabsTrigger>
           </TabsList>
         </div>
         <TabsContent value="transcript" className="min-h-0 flex-1 overflow-y-auto">
