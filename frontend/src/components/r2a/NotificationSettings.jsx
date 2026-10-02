@@ -11,6 +11,8 @@ import { cn } from '@/lib/utils'
 import { formatDateTime } from './status'
 
 const EVENTS = [['job_done', 'Job finished'], ['job_failed', 'Job failed'], ['job_stopped', 'Job stopped'], ['queue_empty', 'Queue empty']]
+const GITHUB_EVENTS = [['github_pushed', 'GitHub: pushed'], ['github_pr_opened', 'GitHub: PR opened'], ['github_pr_merged', 'GitHub: PR merged'],
+  ['github_pr_closed', 'GitHub: PR closed'], ['github_checks_passed', 'GitHub: checks passed'], ['github_checks_failed', 'GitHub: checks failed']]
 const CHANNELS = [['in_app', 'In-app'], ['webhook', 'Webhook'], ['email', 'Email']]
 const fieldCls = 'h-9 bg-card font-mono text-base sm:text-sm'
 
@@ -124,12 +126,12 @@ export default function NotificationSettings() {
             </tr>
           </thead>
           <tbody>
-            {EVENTS.map(([ev, label]) => (
+            {[...EVENTS, ...GITHUB_EVENTS].map(([ev, label]) => (
               <tr key={ev} className="border-t border-border">
                 <td className="py-2">{label}</td>
                 {CHANNELS.map(([ch, chLabel]) => (
                   <td key={ch} className="text-center">
-                    <Check checked={form[ch].events[ev]} onChange={(v) => setEvent(ch, ev, v)} label={`${chLabel}: ${label}`} testId={`notif-ev-${ch}-${ev}`} />
+                    <Check checked={!!form[ch].events[ev]} onChange={(v) => setEvent(ch, ev, v)} label={`${chLabel}: ${label}`} testId={`notif-ev-${ch}-${ev}`} />
                   </td>
                 ))}
               </tr>

@@ -20,6 +20,8 @@ from aiosmtpd.smtp import AuthResult
 
 from isolated_server import IsolatedServer, free_port, run_tests
 
+GITHUB_EVENTS = ("github_pushed", "github_pr_opened", "github_pr_merged", "github_pr_closed", "github_checks_passed",
+                 "github_checks_failed")  # added in PR D
 STUB = os.environ.get("TEST_STUB_URL", "http://127.0.0.1:9090")
 B = ""
 SRV: IsolatedServer | None = None
@@ -122,7 +124,8 @@ def test_settings_defaults_and_shape():
                                "password_set", "password_masked"}
     assert "password" not in s["email"] and s["email"]["password_set"] is False
     assert s["webhook"]["enabled"] is False and s["email"]["port"] == 587 and s["email"]["security"] == "starttls"
-    assert set(s["in_app"]["events"]) == {"job_done", "job_failed", "job_stopped", "queue_empty"}
+    assert set(s["in_app"]["events"]) == {"job_done", "job_failed", "job_stopped", "queue_empty", *GITHUB_EVENTS}
+    assert all(s["in_app"]["events"][e] and not s["email"]["events"][e] for e in GITHUB_EVENTS)  # PR D
 
 
 def test_settings_validation():
@@ -135,7 +138,8 @@ def test_settings_validation():
         put(body, 422)
     s = put({"webhook": {"url": W["ok"]}, "in_app": {"events": {"queue_empty": False}}})
     assert s["webhook"]["url"] == W["ok"] and s["webhook"]["enabled"] is False
-    assert s["in_app"]["events"] == {"job_done": True, "job_failed": True, "job_stopped": True, "queue_empty": False}
+    assert s["in_app"]["events"] == {"job_done": True, "job_failed": True, "job_stopped": True, "queue_empty": False,
+                                     **{e: True for e in GITHUB_EVENTS}}
     s = put({"email": {"to_addrs": "a@example.com, b@example.com;c@example.com"}})
     assert s["email"]["to_addrs"] == ["a@example.com", "b@example.com", "c@example.com"] and s["updated_at"]
     reset_all()
@@ -297,7 +301,8 @@ def test_list_read_clear():
     d = notes()
     assert d["total"] == len(d["items"]) and d["unread_count"] == d["total"]
     assert [x["created_at"] for x in d["items"]] == sorted((x["created_at"] for x in d["items"]), reverse=True)
-    assert set(d["items"][0]) == {"id", "event", "job_id", "title", "status", "step", "message", "url", "created_at", "read", "deliveries"}
+    assert set(d["items"][0]) == {"id", "event", "job_id", "title", "status", "step", "message", "url", "link", "created_at", "read", "deliveries"}
+    assert d["items"][0]["link"] is None  # only GitHub events carry a link
     first = d["items"][0]["id"]
     r = c.post(f"{B}/notifications/{first}/read").json()
     assert r["read"] is True and r["unread_count"] == d["total"] - 1

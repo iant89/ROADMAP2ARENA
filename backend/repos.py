@@ -16,6 +16,8 @@ All git work on one repo is serialised with a per-repo asyncio lock.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 import os
 import re
 import shutil
@@ -28,10 +30,57 @@ BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 OWNER_TYPES = {"job": "repos", "project": "projects"}
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,80}$")
 _locks: dict[str, asyncio.Lock] = {}
+logger = logging.getLogger("roadmap2arena.repos")
+
+
+REPO_ROOT = os.path.dirname(BACKEND_DIR)
+# Before F-006 the data lived in backend/data - inside uvicorn --reload's watch, so a job writing
+# app/main.py into its repo restarted the backend and killed the running job.
+LEGACY_DATA_DIR = os.path.join(BACKEND_DIR, "data")
 
 
 def data_dir() -> str:
-    return os.path.abspath(os.environ.get("R2A_DATA_DIR") or os.path.join(BACKEND_DIR, "data"))
+    """R2A_DATA_DIR, default <repo root>/data - deliberately outside backend/ (the reload watch)."""
+    return os.path.abspath(os.environ.get("R2A_DATA_DIR") or os.path.join(REPO_ROOT, "data"))
+
+
+def migrate_legacy_data(legacy_dir: str = LEGACY_DATA_DIR) -> dict:
+    """Move job repos from the old backend/data/repos to <data_dir>/repos (once, at startup).
+
+    Each repo directory is moved only if nothing exists at its new path (never overwrites); repo
+    documents store paths relative to the data dir, so the DB needs no change. Empty legacy
+    directories are removed afterwards. Returns {"moved": [...], "skipped": [...]} for logging/tests.
+    """
+    moved, skipped = [], []
+    if (data_dir() + os.sep).startswith(BACKEND_DIR + os.sep):
+        logger.warning("R2A_DATA_DIR %s is inside backend/ - with uvicorn --reload a job writing files "
+                       "can restart the backend; use a directory outside backend/", data_dir())
+    if os.environ.get("R2A_MIGRATE_LEGACY_DATA", "1").strip().lower() in ("0", "false", "no", "off"):
+        return {"moved": moved, "skipped": skipped}  # test servers with throwaway data dirs
+    old_root = os.path.abspath(legacy_dir)
+    new_root = data_dir()
+    if old_root == new_root or not os.path.isdir(os.path.join(old_root, "repos")):
+        return {"moved": moved, "skipped": skipped}
+    for kind in sorted(set(OWNER_TYPES.values())):
+        src_dir, dst_dir = os.path.join(old_root, kind), os.path.join(new_root, kind)
+        if not os.path.isdir(src_dir) or os.path.islink(src_dir):
+            continue
+        os.makedirs(dst_dir, exist_ok=True)
+        for name in sorted(os.listdir(src_dir)):
+            src, dst = os.path.join(src_dir, name), os.path.join(dst_dir, name)
+            if os.path.lexists(dst):
+                skipped.append(os.path.join(kind, name))
+                logger.warning("Data migration: %s already exists - left %s in place", dst, src)
+                continue
+            shutil.move(src, dst)
+            moved.append(os.path.join(kind, name))
+        with contextlib.suppress(OSError):
+            os.rmdir(src_dir)  # only if empty
+    with contextlib.suppress(OSError):
+        os.rmdir(old_root)
+    if moved:
+        logger.info("Data migration: moved %d repo(s) from %s to %s", len(moved), old_root, new_root)
+    return {"moved": moved, "skipped": skipped}
 
 
 def rel_path(owner_type: str, owner_id: str) -> str:

@@ -1,39 +1,17 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Archive, FileCode2, RefreshCw } from 'lucide-react'
-import { GitBranchIcon, GitCommitIcon, PackageIcon, RepoIcon } from '@primer/octicons-react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { Archive, RefreshCw, X } from 'lucide-react'
+import { GitBranchIcon, GitCommitIcon, GitCompareIcon, GitPullRequestIcon, MarkGithubIcon, PackageIcon, RepoIcon } from '@primer/octicons-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import { downloadJobRepo, getJobCommit, getJobGit, initJobGit } from '@/lib/api'
+import { compareJobCommits, downloadJobRepo, getJobCommit, getJobGit, initJobGit } from '@/lib/api'
 import { formatDateTime } from './status'
 
-const STATUS_STYLE = {
-  added: 'text-teal', modified: 'text-amber-700', deleted: 'text-coral', renamed: 'text-slate',
-}
+const DiffViewer = lazy(() => import('./DiffViewer'))
 
-function PatchView({ patch, truncated }) {
-  if (!patch) return <p className="p-4 text-[13px] text-muted-foreground">No changes in this commit.</p>
-  return (
-    <div className="overflow-x-auto rounded-lg border border-border bg-[#14171C]" data-testid="git-patch">
-      <pre className="min-w-fit p-3 font-mono text-[12px] leading-[1.5]">
-        {patch.split('\n').map((line, i) => (
-          <div
-            key={i}
-            className={cn(
-              'whitespace-pre px-1',
-              line.startsWith('+') && !line.startsWith('+++') && 'bg-[#123326] text-[#7EE2B8]',
-              line.startsWith('-') && !line.startsWith('---') && 'bg-[#3A1A17] text-[#FFA28F]',
-              line.startsWith('@@') && 'text-[#8AB4F8]',
-              (line.startsWith('diff --git') || line.startsWith('+++') || line.startsWith('---') || line.startsWith('index ') || line.startsWith('new file')) && 'text-[#9FB3C8]',
-              !/^[-+@di]|^new/.test(line) && 'text-[#D6DCE4]',
-            )}
-          >{line || ' '}</div>
-        ))}
-      </pre>
-      {truncated && <p className="border-t border-white/10 px-3 py-2 text-[12px] text-[#F2C266]" data-testid="git-patch-truncated">Diff truncated - download the repository to see everything.</p>}
-    </div>
-  )
+function DiffFallback() {
+  return <div className="space-y-2"><Skeleton className="h-8" /><Skeleton className="h-40" /></div>
 }
 
 function CommitDetail({ jobId, sha }) {
@@ -57,25 +35,58 @@ function CommitDetail({ jobId, sha }) {
           {commit.parents.length === 0 && ' - first commit'}
         </p>
       </div>
-      <div className="rounded-lg border border-border bg-card">
-        <p className="border-b border-border px-3 py-1.5 text-[12px] font-medium text-muted-foreground">
-          {commit.files.length} file{commit.files.length === 1 ? '' : 's'} changed
-        </p>
-        <ul className="divide-y divide-border" data-testid="git-commit-files">
-          {commit.files.map((f) => (
-            <li key={f.path} className="flex items-center gap-2 px-3 py-1.5 text-[12.5px]">
-              <FileCode2 className="size-3.5 shrink-0 text-slate" />
-              <span className="min-w-0 flex-1 truncate font-mono">{f.path}</span>
-              <span className={cn('text-[11px] font-medium', STATUS_STYLE[f.status])}>{f.status}</span>
-              <span className="w-16 text-right font-mono text-[11px]">
-                <span className="text-teal">+{f.additions ?? '?'}</span> <span className="text-coral">-{f.deletions ?? '?'}</span>
-              </span>
-            </li>
-          ))}
-          {!commit.files.length && <li className="px-3 py-2 text-[12.5px] text-muted-foreground">No files (the step produced no named files).</li>}
-        </ul>
+      <Suspense fallback={<DiffFallback />}>
+        <DiffViewer key={commit.sha} diff={commit.diff} testId="git-commit-diff" emptyText="No files in this commit (the step produced no named files)." />
+      </Suspense>
+    </div>
+  )
+}
+
+function commitLabel(c) {
+  return `${c.short_sha} - ${c.message}`
+}
+
+// Compare two commits (= two steps' outputs): base..head through the shared DiffViewer.
+function CompareView({ jobId, commits, onClose }) {
+  const [head, setHead] = useState(commits[0]?.sha ?? '')
+  const [base, setBase] = useState(commits[commits.length - 1]?.sha === commits[0]?.sha ? '' : commits[commits.length - 1]?.sha ?? '')
+  const [state, setState] = useState({ key: null, diff: null, error: null })
+  const key = `${base}..${head}`
+  useEffect(() => {
+    if (!head) return undefined
+    let alive = true
+    compareJobCommits(jobId, head, base || undefined)
+      .then((diff) => alive && setState({ key, diff, error: null }))
+      .catch((err) => alive && setState({ key, diff: null, error: err.message }))
+    return () => { alive = false }
+  }, [jobId, head, base, key])
+  const sel = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-card px-2 font-mono text-base sm:text-[12.5px]'
+  return (
+    <div className="space-y-3 p-4" data-testid="git-compare">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="flex items-center gap-2 text-[14px] font-semibold"><GitCompareIcon size={16} /> Compare steps</p>
+        <Button size="xs" variant="ghost" className="ml-auto" onClick={onClose} data-testid="git-compare-close"><X /> Close</Button>
       </div>
-      <PatchView patch={commit.patch} truncated={commit.patch_truncated} />
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <label className="flex min-w-0 flex-1 items-center gap-2 text-[12px] text-muted-foreground">From
+          <select className={sel} value={base} onChange={(e) => setBase(e.target.value)} data-testid="git-compare-base">
+            <option value="">(parent of "To")</option>
+            {commits.map((c) => <option key={c.sha} value={c.sha}>{commitLabel(c)}</option>)}
+          </select>
+        </label>
+        <label className="flex min-w-0 flex-1 items-center gap-2 text-[12px] text-muted-foreground">To
+          <select className={sel} value={head} onChange={(e) => setHead(e.target.value)} data-testid="git-compare-head">
+            {commits.map((c) => <option key={c.sha} value={c.sha}>{commitLabel(c)}</option>)}
+          </select>
+        </label>
+      </div>
+      {state.key === key && state.error && <p className="text-sm text-coral" data-testid="git-compare-error">{state.error}</p>}
+      {state.key !== key && <DiffFallback />}
+      {state.key === key && state.diff && (
+        <Suspense fallback={<DiffFallback />}>
+          <DiffViewer key={key} diff={state.diff} testId="git-compare-diff" emptyText="No differences between these commits." />
+        </Suspense>
+      )}
     </div>
   )
 }
@@ -86,6 +97,7 @@ export default function GitPanel({ job, version }) {
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
   const [busy, setBusy] = useState(null)
+  const [comparing, setComparing] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -155,6 +167,9 @@ export default function GitPanel({ job, version }) {
         <span className="text-[12px] text-muted-foreground" data-testid="git-commit-count">{git.commit_count} commit{git.commit_count === 1 ? '' : 's'}</span>
         {git.head && <span className="font-mono text-[12px] text-muted-foreground">HEAD {git.head.slice(0, 7)}</span>}
         <div className="ml-auto flex flex-wrap gap-2">
+          <Button size="sm" variant={comparing ? 'secondary' : 'outline'} onClick={() => setComparing((v) => !v)} disabled={git.commits.length < 1} aria-pressed={comparing} data-testid="git-compare-button" title="Compare the output of two steps">
+            <GitCompareIcon size={16} /> Compare
+          </Button>
           <Button size="sm" variant="ghost" onClick={load} title="Refresh" aria-label="Refresh git history" data-testid="git-refresh"><RefreshCw /></Button>
           <Button size="sm" variant="outline" onClick={() => download('zip')} disabled={!git.commit_count || !!busy} data-testid="git-download-zip" title="ZIP of the working tree including the .git folder">
             <Archive /> {busy === 'zip' ? 'Packing...' : 'Download repo'}
@@ -164,6 +179,18 @@ export default function GitPanel({ job, version }) {
           </Button>
         </div>
       </div>
+      {git.remotes?.length > 0 && (
+        <ul className="flex flex-wrap gap-x-4 gap-y-1 border-b border-border px-4 py-1.5 text-[12px]" data-testid="git-remotes">
+          {git.remotes.map((r) => (
+            <li key={`${r.full_name}:${r.branch}`} className="flex items-center gap-1.5">
+              <MarkGithubIcon size={16} />
+              <a href={`${r.html_url}/tree/${r.branch}`} target="_blank" rel="noreferrer" className="font-mono underline underline-offset-2">{r.full_name}:{r.branch}</a>
+              <span className="text-muted-foreground">{r.pushed_head?.slice(0, 7)}{r.pushed_head === git.head ? ' (up to date)' : ' (behind)'}</span>
+              {r.pr_url && <a href={r.pr_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 underline"><GitPullRequestIcon size={16} /> #{r.pr_number}</a>}
+            </li>
+          ))}
+        </ul>
+      )}
       {git.uncommitted_steps > 0 && job.status !== 'running' && (
         <p className="border-b border-border bg-amber-50 px-4 py-1.5 text-[12px] text-amber-800" data-testid="git-uncommitted">
           {git.uncommitted_steps} done step{git.uncommitted_steps === 1 ? ' has' : 's have'} no commit (see the Log).{' '}
@@ -179,7 +206,7 @@ export default function GitPanel({ job, version }) {
               <li key={c.sha}>
                 <button
                   type="button"
-                  onClick={() => setSelected(c.sha)}
+                  onClick={() => { setSelected(c.sha); setComparing(false) }}
                   aria-pressed={selected === c.sha}
                   data-testid={`git-commit-${c.short_sha}`}
                   className={cn('flex w-full items-start gap-2.5 border-l-2 px-3 py-2.5 text-left hover:bg-muted', selected === c.sha ? 'border-l-teal bg-muted' : 'border-l-transparent')}
@@ -196,7 +223,11 @@ export default function GitPanel({ job, version }) {
               </li>
             ))}
           </ul>
-          <div className="min-h-0 overflow-y-auto">{selected && <CommitDetail jobId={job.id} sha={selected} />}</div>
+          <div className="min-h-0 overflow-y-auto">
+            {comparing
+              ? <CompareView jobId={job.id} commits={git.commits} onClose={() => setComparing(false)} />
+              : selected && <CommitDetail jobId={job.id} sha={selected} />}
+          </div>
         </div>
       )}
     </div>

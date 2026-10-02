@@ -499,7 +499,7 @@ def test_n_test_buttons():
     r = c.post("/notifications/test/webhook")
     assert r.status_code == 200 and r.json() == {"ok": True, "status_code": 200, "error": None, "url": W["ok"]}, r.text
     h = HOOKS[n]["json"]
-    assert set(h) == {"event", "job_id", "title", "status", "step", "message", "url", "timestamp", "app", "text", "content"}
+    assert set(h) == {"event", "job_id", "title", "status", "step", "message", "url", "link", "timestamp", "app", "text", "content"}
     assert h["event"] == "test" and h["job_id"] is None and ISO_Z.match(h["timestamp"])
     r = c.post("/notifications/test/webhook", json={"url": W["fail"]}).json()
     assert r["ok"] is False and r["status_code"] == 500 and "HTTP 500" in r["error"], r
@@ -563,7 +563,7 @@ def test_n_events_fire():
     its = items()
     assert sorted(i["event"] for i in its) == ["job_done", "queue_empty"]
     nd = next(i for i in its if i["event"] == "job_done")
-    assert set(nd) == {"id", "event", "job_id", "title", "status", "step", "message", "url", "created_at", "read", "deliveries"}
+    assert set(nd) == {"id", "event", "job_id", "title", "status", "step", "message", "url", "link", "created_at", "read", "deliveries"}
     assert wait_for(lambda: all(k in next(i for i in items() if i["event"] == "job_done")["deliveries"] for k in ("webhook", "email")))
     nd = next(i for i in items() if i["event"] == "job_done")
     assert nd["deliveries"]["webhook"]["ok"] and nd["deliveries"]["email"]["ok"], nd["deliveries"]

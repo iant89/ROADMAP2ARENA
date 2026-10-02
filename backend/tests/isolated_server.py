@@ -45,7 +45,9 @@ class IsolatedServer:
 
     def __enter__(self) -> str:
         env = {**os.environ, "DB_NAME": self.db_name, "ARENA_STEP_DELAY_SECONDS": str(self.step_delay),
-               "PYTHONDONTWRITEBYTECODE": "1", **self.extra_env}
+               "PYTHONDONTWRITEBYTECODE": "1",
+               # throwaway data dirs must never pull in the checkout's legacy backend/data/repos
+               "R2A_MIGRATE_LEGACY_DATA": "0", **self.extra_env}
         self._log = open(self.log_path, "w")
         self.proc = subprocess.Popen([UVICORN, "server:app", "--host", "127.0.0.1", "--port", str(self.port)],
                                      cwd=BACKEND_DIR, env=env, stdout=self._log, stderr=subprocess.STDOUT)
@@ -55,6 +57,10 @@ class IsolatedServer:
                 raise RuntimeError(f"isolated backend exited: {open(self.log_path).read()[-2000:]}")
             try:
                 if httpx.get(f"{self.base}/queue", timeout=2).status_code == 200:
+                    # suites that also hit a "direct" URL (default :8001) must use this server instead
+                    self._saved_env = {k: os.environ.get(k) for k in ("TEST_DIRECT_URL", "R2A_TEST_ISOLATED")}
+                    os.environ["TEST_DIRECT_URL"] = self.base
+                    os.environ["R2A_TEST_ISOLATED"] = "1"
                     return self.base
             except httpx.HTTPError:
                 pass
@@ -66,6 +72,11 @@ class IsolatedServer:
         return MongoClient(_env_file()["MONGO_URL"], serverSelectionTimeoutMS=5000)[self.db_name]
 
     def __exit__(self, *exc) -> None:
+        for k, v in getattr(self, "_saved_env", {}).items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:

@@ -10,7 +10,10 @@ import copy
 import re
 from urllib.parse import urlparse
 
-EVENTS = ("job_done", "job_failed", "job_stopped", "queue_empty")
+JOB_EVENTS = ("job_done", "job_failed", "job_stopped", "queue_empty")
+GITHUB_EVENTS = ("github_pushed", "github_pr_opened", "github_pr_merged", "github_pr_closed", "github_checks_passed",
+                 "github_checks_failed")
+EVENTS = JOB_EVENTS + GITHUB_EVENTS
 SECURITY = ("starttls", "ssl", "none")
 MASK = "********"
 _DOC_ID = "singleton"
@@ -23,7 +26,8 @@ DEFAULTS: dict = {
     "webhook": {"enabled": False, "url": "", "events": dict(_ALL_ON)},
     "email": {"enabled": False, "host": "", "port": 587, "security": "starttls", "username": "", "password": "",
               "from_addr": "", "to_addrs": [], "events": {"job_done": True, "job_failed": True,
-                                                          "job_stopped": False, "queue_empty": False}},
+                                                          "job_stopped": False, "queue_empty": False,
+                                                          **{e: False for e in GITHUB_EVENTS}}},
 }
 SECTION_KEYS = {
     "in_app": {"events"},

@@ -25,9 +25,13 @@ KEEP = 500  # notifications kept in the collection
 WEBHOOK_TIMEOUT = 10.0
 SMTP_TIMEOUT = 15.0
 ICONS = {"job_done": "\u2705", "job_failed": "\u274c", "job_stopped": "\u23f9\ufe0f", "queue_empty": "\U0001f4ed",
-         "test": "\U0001f514"}
+         "test": "\U0001f514", "github_pushed": "\u2b06\ufe0f", "github_pr_opened": "\U0001f500",
+         "github_pr_merged": "\U0001f7e3", "github_pr_closed": "\u26d4", "github_checks_passed": "\u2705",
+         "github_checks_failed": "\u274c"}
 LABELS = {"job_done": "Job finished", "job_failed": "Job failed", "job_stopped": "Job stopped", "queue_empty": "Queue empty",
-          "test": "Test notification"}
+          "test": "Test notification", "github_pushed": "Pushed to GitHub", "github_pr_opened": "PR opened",
+          "github_pr_merged": "PR merged", "github_pr_closed": "PR closed", "github_checks_passed": "Checks passed",
+          "github_checks_failed": "Checks failed"}
 
 
 def _clip(text: str, n: int) -> str:
@@ -35,11 +39,15 @@ def _clip(text: str, n: int) -> str:
     return text if len(text) <= n else text[: n - 1] + "\u2026"
 
 
-def build_event(event: str, job: dict | None, app_url: str, paused: int = 0) -> dict:
-    """The notification / webhook payload for an event."""
+def build_event(event: str, job: dict | None, app_url: str, paused: int = 0, message: str | None = None,
+                link: str | None = None) -> dict:
+    """The notification / webhook payload for an event. `message`/`link` are prebuilt by GitHub events
+    (link = the GitHub URL; url stays the in-app link)."""
     title = (job or {}).get("title") or ("Untitled roadmap" if job else None)
     step = None
-    if event == "job_done":
+    if message is not None:
+        pass
+    elif event == "job_done":
         step = job.get("step_total")
         message = f"Job finished: {title} - {job.get('steps_done')}/{job.get('step_total')} steps"
     elif event == "job_failed":
@@ -56,10 +64,11 @@ def build_event(event: str, job: dict | None, app_url: str, paused: int = 0) -> 
         message = "Test notification from ROADMAP2ARENA - webhook/email delivery works"
     job_id = (job or {}).get("id")
     url = f"{app_url}/?tab=history&job={job_id}" if job_id else f"{app_url}/?tab=queue"
-    human = f"{ICONS.get(event, '')} {message}\n{url}".strip()
+    human = f"{ICONS.get(event, '')} {message}\n" + (f"{link}\n" if link else "") + url
+    human = human.strip()
     return {
         "event": event, "job_id": job_id, "title": title, "status": (job or {}).get("status"), "step": step,
-        "message": message, "url": url, "timestamp": now_iso(), "app": "ROADMAP2ARENA",
+        "message": message, "url": url, "link": link, "timestamp": now_iso(), "app": "ROADMAP2ARENA",
         "text": human,                 # Slack incoming webhooks
         "content": human if len(human) <= 1900 else human[:1899] + "\u2026",  # Discord (2000 char limit)
     }
@@ -108,7 +117,8 @@ def build_email(cfg: dict, payload: dict) -> EmailMessage:
                      (f": {payload['title']}" if payload.get("title") else "")
     msg["From"] = cfg["from_addr"]
     msg["To"] = ", ".join(cfg["to_addrs"])
-    lines = [payload["message"], "", f"Open: {payload['url']}", ""]
+    lines = [payload["message"], ""] + ([f"GitHub: {payload['link']}"] if payload.get("link") else []) + \
+            [f"Open: {payload['url']}", ""]
     if payload.get("job_id"):
         lines += [f"Job: {payload['job_id']}", f"Status: {payload['status']}"]
     lines += [f"Event: {payload['event']}", f"Time: {payload['timestamp']}"]
@@ -141,10 +151,11 @@ async def _record(db, notif_id: str | None, job_id: str | None, channel: str, re
         await db.notifications.update_one({"id": notif_id}, {"$set": {f"deliveries.{channel}": {**res, "at": now_iso()}}})
 
 
-async def notify(db, event: str, job: dict | None, paused: int = 0) -> dict | None:
+async def notify(db, event: str, job: dict | None, paused: int = 0, message: str | None = None,
+                 link: str | None = None) -> dict | None:
     """Store (if in-app is on for this event) and send to the enabled external channels."""
     cfg = await notify_settings.get(db)
-    payload = build_event(event, job, cfg["app_url"], paused)
+    payload = build_event(event, job, cfg["app_url"], paused, message, link)
     notif_id = None
     if cfg["in_app"]["events"].get(event):
         notif_id = uuid.uuid4().hex

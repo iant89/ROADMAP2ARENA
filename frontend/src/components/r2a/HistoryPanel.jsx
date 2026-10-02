@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CheckSquare, History, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Square } from 'lucide-react'
+import { Check, CheckSquare, History, ListChecks, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -132,7 +132,7 @@ export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDeskt
         <h2 className="flex-1 text-[15px] font-semibold tracking-tight">Job history</h2>
         {!(collapsed && !isDesktop) && (
           <Button size="xs" variant={selecting ? 'default' : 'ghost'} onClick={toggleSelecting} aria-pressed={selecting} data-testid="history-select-toggle">
-            {selecting ? 'Done' : 'Select'}
+            {selecting ? <><Check /> Done</> : <><ListChecks /> Select</>}
           </Button>
         )}
         <Button size="icon-sm" variant="ghost" onClick={reload} aria-label="Refresh job list" data-testid="history-refresh"><RefreshCw /></Button>

@@ -26,7 +26,11 @@ if [ -f backend/server.py ]; then
     PIDS+=("$!")
     echo "arena2api stub: http://127.0.0.1:9090"
   fi
-  (cd backend && exec ../venv/bin/uvicorn server:app --host 127.0.0.1 --port 8001 --reload) &
+  # Watch only the backend source: job repos (R2A_DATA_DIR, default ./data) and tests/ must never
+  # trigger a reload - that would kill a running job (F-006). Excludes need watchfiles installed.
+  (cd backend && exec ../venv/bin/uvicorn server:app --host 127.0.0.1 --port 8001 --reload \
+    --reload-dir "$PWD" --reload-exclude "$PWD/tests" \
+    --reload-exclude 'tests/*' --reload-exclude 'data/*' --reload-exclude '*.git*') &
   PIDS+=("$!")
   echo "backend:  http://127.0.0.1:8001/api"
 else

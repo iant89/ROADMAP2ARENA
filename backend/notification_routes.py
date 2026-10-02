@@ -9,7 +9,7 @@ from database import db
 from orchestrator import now_iso
 
 router = APIRouter(prefix="/api/notifications")
-FIELDS = {"_id": 0, "id": 1, "event": 1, "job_id": 1, "title": 1, "status": 1, "step": 1, "message": 1, "url": 1,
+FIELDS = {"_id": 0, "id": 1, "event": 1, "job_id": 1, "title": 1, "status": 1, "step": 1, "message": 1, "url": 1, "link": 1,
           "created_at": 1, "read": 1, "deliveries": 1}
 
 
