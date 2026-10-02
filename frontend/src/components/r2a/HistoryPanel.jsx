@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { History, PanelLeftClose, PanelLeftOpen, RefreshCw, Search } from 'lucide-react'
+import { CheckSquare, History, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -7,12 +7,14 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { listJobs } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import HistoryBulkBar from './HistoryBulkBar'
 import { STATUS_META, StatusChip, StatusIcon, formatDateTime } from './status'
 
 const STORAGE_KEY = 'r2a.historyPanel.collapsed'
 const LIMIT = 200
 const POLL_MS = 4000
 const FILTERS = ['all', 'queued', 'paused', 'running', 'done', 'error', 'stopped', 'cancelled']
+const FINISHED = ['done', 'error', 'stopped', 'cancelled']
 
 function readCollapsed() {
   try { return window.localStorage.getItem(STORAGE_KEY) === '1' } catch { return false }
@@ -79,11 +81,26 @@ function Rail({ jobs, selectedId, onSelect, onExpand }) {
 
 // Collapsible side panel of previous jobs. Collapsed = narrow rail of status icons;
 // the state is remembered in localStorage.
-export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDesktop }) {
+// Selection mode (Select button) adds checkboxes and a toolbar for bulk / "all finished" deletes.
+export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDesktop, onDeleted }) {
   const [collapsed, setCollapsed] = useState(readCollapsed)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
+  const [selecting, setSelecting] = useState(false)
+  const [picked, setPicked] = useState(() => new Set())
   const { jobs, error, reload } = useJobList(refreshKey)
+
+  const toggleSelecting = () => { setSelecting((v) => !v); setPicked(new Set()) }
+  const togglePick = (j) => {
+    if (j.status === 'running') return
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (next.has(j.id)) next.delete(j.id)
+      else next.add(j.id)
+      return next
+    })
+  }
+  const handleDeleted = (ids) => { reload(); onDeleted?.(ids) }
 
   const setAndStore = (value) => {
     setCollapsed(value)
@@ -95,6 +112,10 @@ export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDeskt
     for (const j of jobs ?? []) c[j.status] = (c[j.status] ?? 0) + 1
     return c
   }, [jobs])
+  const finishedCount = FINISHED.reduce((n, st) => n + (counts[st] ?? 0), 0)
+  // drop picks that vanished from the list or started running
+  const live = new Set((jobs ?? []).filter((j) => j.status !== 'running').map((j) => j.id))
+  const selected = [...picked].every((id) => live.has(id)) ? picked : new Set([...picked].filter((id) => live.has(id)))
   const q = query.trim().toLowerCase()
   const shown = (jobs ?? []).filter((j) => (filter === 'all' || j.status === filter)
     && (!q || j.title.toLowerCase().includes(q) || (j.model || '').toLowerCase().includes(q) || j.id.startsWith(q)))
@@ -109,6 +130,11 @@ export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDeskt
       <div className="flex items-center gap-2 px-4 pt-4 pb-2">
         <History className="size-4" />
         <h2 className="flex-1 text-[15px] font-semibold tracking-tight">Job history</h2>
+        {!(collapsed && !isDesktop) && (
+          <Button size="xs" variant={selecting ? 'default' : 'ghost'} onClick={toggleSelecting} aria-pressed={selecting} data-testid="history-select-toggle">
+            {selecting ? 'Done' : 'Select'}
+          </Button>
+        )}
         <Button size="icon-sm" variant="ghost" onClick={reload} aria-label="Refresh job list" data-testid="history-refresh"><RefreshCw /></Button>
         <Button size="icon-sm" variant="ghost" onClick={() => setAndStore(!collapsed)} aria-label={collapsed ? 'Expand job list' : 'Collapse job list'} data-testid="history-panel-collapse">
           {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
@@ -136,6 +162,9 @@ export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDeskt
                 </button>
               ))}
             </div>
+            {selecting && (
+              <HistoryBulkBar visible={shown} selected={selected} setSelected={setPicked} finishedCount={finishedCount} onDeleted={handleDeleted} />
+            )}
           </div>
           <ListScroll isDesktop={isDesktop}>
             <ul className="space-y-1.5 p-2.5" data-testid="history-list">
@@ -148,13 +177,21 @@ export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDeskt
                 <li key={j.id}>
                   <button
                     type="button"
-                    onClick={() => onSelect(j.id)}
+                    onClick={() => (selecting ? togglePick(j) : onSelect(j.id))}
                     data-testid={`history-job-${j.id}`}
-                    aria-current={j.id === selectedId ? 'true' : undefined}
+                    aria-current={!selecting && j.id === selectedId ? 'true' : undefined}
+                    aria-pressed={selecting ? selected.has(j.id) : undefined}
+                    aria-disabled={selecting && j.status === 'running' ? 'true' : undefined}
+                    title={selecting && j.status === 'running' ? "Running jobs can't be deleted - stop it first" : undefined}
                     className={cn('w-full rounded-lg border px-3 py-2.5 text-left transition-[border-color,box-shadow] duration-150 hover:border-input hover:shadow-sm',
-                      j.id === selectedId ? 'border-primary bg-card ring-1 ring-primary' : 'border-transparent bg-card/70')}
+                      selecting && selected.has(j.id) ? 'border-coral/60 bg-coral-soft/60'
+                        : !selecting && j.id === selectedId ? 'border-primary bg-card ring-1 ring-primary' : 'border-transparent bg-card/70',
+                      selecting && j.status === 'running' && 'cursor-not-allowed opacity-60')}
                   >
                     <div className="flex items-center gap-2">
+                      {selecting && (selected.has(j.id)
+                        ? <CheckSquare className="size-4 shrink-0 text-coral" data-testid="history-job-checked" />
+                        : <Square className="size-4 shrink-0 text-muted-foreground" />)}
                       <StatusChip status={j.status} testId="history-job-status" className="h-5 px-2 text-[10px]" />
                       <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{formatDateTime(j.created_at)}</span>
                     </div>

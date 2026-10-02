@@ -21,6 +21,7 @@ import settings
 from artifact_extractor import clean_zip_path
 from database import db, mongo
 from orchestrator import append_log, now_iso
+from deletion_routes import router as deletion_router
 from history_routes import router as history_router
 from queue_routes import queue_state, router as queue_router
 from roadmap_parser import parse_roadmap, roadmap_title
@@ -379,3 +380,4 @@ async def download(job_id: str):
 app.include_router(api)
 app.include_router(queue_router)
 app.include_router(history_router)
+app.include_router(deletion_router)

@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Copy, Download, FileDown, FolderTree, ListChecks, MessagesSquare, ScrollText } from 'lucide-react'
+import { Copy, Download, FileDown, FolderTree, ListChecks, MessagesSquare, ScrollText, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useJob } from '@/hooks/useJob'
 import { useJobActions } from '@/hooks/useJobActions'
+import { deleteJob } from '@/lib/api'
 import ArtifactsPanel from './ArtifactsPanel'
+import ConfirmButton from './ConfirmButton'
 import FullTranscript from './FullTranscript'
 import JobAlerts from './JobAlerts'
 import JobControls from './JobControls'
@@ -26,11 +29,12 @@ function JobLink({ label, id, onOpen }) {
 
 // Job history detail: header with actions (Clone, transcript export, ZIP, Resume/Restart/Stop)
 // and Transcript | Files | Steps | Log tabs.
-export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueChanged, onClone }) {
+export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueChanged, onClone, onDeleted }) {
   const { job, error, refresh, restartPolling } = useJob(jobId)
   const actions = useJobActions(job, { refresh, restartPolling, onOpenJob, onQueueChanged })
   const [tab, setTab] = useState('transcript')
   const [selectedPath, setSelectedPath] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => { setSelectedPath(null) }, [jobId])
   useEffect(() => {
@@ -47,6 +51,19 @@ export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueCh
   }
 
   const turns = job.steps.filter((s) => s.status !== 'pending').length
+  const running = job.status === 'running'
+  const remove = async () => {
+    setDeleting(true)
+    try {
+      await deleteJob(job.id)
+      toast.success('Job deleted', { description: `${job.title || 'Untitled roadmap'} - steps and files removed` })
+      onDeleted?.([job.id])
+    } catch (err) {
+      if (err.status === 404) onDeleted?.([job.id])
+      else toast.error('Could not delete the job', { description: err.message })
+      setDeleting(false)
+    }
+  }
   const openById = (id) => onOpenJob(id, null)
 
   return (
@@ -88,11 +105,22 @@ export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueCh
                 <Download /> {actions.downloading ? 'Packing...' : 'Download ZIP'}
               </Button>
             )}
+            <ConfirmButton
+              onConfirm={remove}
+              busy={deleting}
+              disabled={running}
+              testId="delete-job-button"
+              confirmLabel={<><Trash2 /> Delete permanently?</>}
+              title={running ? 'Stop the job first, then delete it' : 'Delete this job with its steps and files'}
+            >
+              <Trash2 /> {deleting ? 'Deleting...' : 'Delete'}
+            </ConfirmButton>
           </div>
         </div>
         <JobControls job={job} busy={actions.busy} onStop={actions.stop} onResume={actions.resume} onRestart={actions.restart} />
         {(job.status === 'queued' || job.status === 'paused') && <QueuedAlert job={job} onOpenQueue={onOpenQueue} />}
         <JobAlerts job={job} onDownload={actions.download} downloading={actions.downloading} />
+        {running && <p className="text-[12px] text-muted-foreground" data-testid="delete-running-hint">A running job can't be deleted - stop it first.</p>}
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0">

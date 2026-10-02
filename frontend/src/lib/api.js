@@ -169,6 +169,7 @@ export async function listJobs({ status, limit } = {}) {
     step_total: j.step_total,
     failed_step: j.failed_step,
     stopped_step: j.stopped_step ?? null,
+    queue_position: j.queue_position ?? null,
   }))
 }
 
@@ -219,8 +220,32 @@ export async function unpauseQueued(id) {
   return request(`/queue/${encodeURIComponent(id)}/unpause`, { method: 'POST' })
 }
 
-export async function removeQueued(id) {
-  return request(`/queue/${encodeURIComponent(id)}`, { method: 'DELETE' })
+// Takes a queued/paused job out of the queue; it stays in history as "cancelled".
+// (Not a delete - see deleteJob.)
+export async function cancelQueued(id) {
+  return request(`/queue/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
+}
+
+// ---------------------------------------------------------------- deletion (permanent)
+// Deletes a job with its steps and files. 409 if it is running (stop it first).
+export async function deleteJob(id) {
+  const res = await request(`/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  forgetSteps(id)
+  return res
+}
+
+// Resolves to { deleted: [ids], deleted_count, skipped: [{ job_id, reason: 'running'|'not_found' }] }.
+export async function bulkDeleteJobs(ids) {
+  const res = await request('/jobs/bulk-delete', { method: 'POST', body: { job_ids: ids } })
+  res.deleted.forEach(forgetSteps)
+  return res
+}
+
+// Deletes every done, failed, stopped and cancelled job. Same result shape as bulkDeleteJobs.
+export async function deleteFinishedJobs() {
+  const res = await request('/jobs/delete-finished', { method: 'POST' })
+  res.deleted.forEach(forgetSteps)
+  return res
 }
 
 // ---------------------------------------------------------------- settings

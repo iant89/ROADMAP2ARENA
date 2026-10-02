@@ -18,14 +18,18 @@ FastAPI's `{"detail": "..."}` shape.
 | GET | `/api/jobs?status=a,b&limit=n` | most recent first, default 20, `limit` 1-200: `[{job_id,status,created_at,step_total,steps_done,title,model,failed_step,stopped_step,restarted_from,queue_position,queued_at,started_at,finished_at,paused}]` | 422 unknown status / limit out of range |
 | GET | `/api/jobs/{id}` | `{job_id,status,error,failed_step,stopped_step,restarted_from,queue_position,queued_at,started_at,title,created_at,finished_at,arena_url,model,project_context,roadmap_md,step_total,steps_done,steps:[{index,title,description,status,error,artifact_paths}],log:[{ts,level,msg}]}` | 404 |
 | GET | `/api/jobs/{id}/steps/{index}` | full step: `{job_id,index,title,description,status,prompt,response,error,artifacts:[{path,content}],started_at,finished_at}` | 404 job or step |
-| POST | `/api/jobs/{id}/stop` | `{job_id,status:"stopped",stopped_step,steps_done}` | 404; 409 job not running (queued/paused: remove it from the queue instead) or finished before the stop took effect |
+| POST | `/api/jobs/{id}/stop` | `{job_id,status:"stopped",stopped_step,steps_done}` | 404; 409 job not running (queued/paused: cancel it via the queue instead) or finished before the stop took effect |
 | POST | `/api/jobs/{id}/restart` body `{arena_url?, model?}` (optional) | 201 `{job_id, status, queue_position}` of a NEW job (enqueued) | 404; 409 job not finished, or a restart of this job is already queued/paused/running; 422 bad override |
 | POST | `/api/jobs/{id}/resume` body `{arena_url?, model?}` (optional) | `{job_id, status:"running"\|"queued", queue_position, resumed_from_step}` (same job, enqueued) | 404; 409 job done/running/queued/paused or nothing left; 422 bad override |
 | GET | `/api/queue` | `{running: summary\|null, queued:[summary in queue order], count, waiting}`; summary = `{job_id,status,title,model,step_total,steps_done,queue_position,queued_at,created_at,started_at,restarted_from,paused}` | - |
 | POST | `/api/queue/{id}/move` body `{direction:"up"\|"down"}` or `{position:n}` | `{job_id,status,queue_position}` | 404; 409 not queued/paused; 422 neither/both fields, bad direction, position < 1 (large positions clamp to the end) |
 | POST | `/api/queue/{id}/pause` | `{job_id,status:"paused",queue_position}` - moved to the END of the queue (idempotent) | 404; 409 not queued/paused |
 | POST | `/api/queue/{id}/unpause` | `{job_id,status,queue_position}` - eligible again, keeps its position; may start at once | 404; 409 not queued/paused |
-| DELETE | `/api/queue/{id}` | `{job_id,status:"cancelled",queue_position:null}` - kept in history | 404; 409 not queued/paused |
+| POST | `/api/queue/{id}/cancel` | `{job_id,status:"cancelled",queue_position:null}` - CANCEL: out of the queue, KEPT in history (resumable/restartable) | 404; 409 not queued/paused (running: use stop) |
+| DELETE | `/api/queue/{id}` | **Deprecated alias of POST `/api/queue/{id}/cancel`** (same behaviour, does NOT delete). Response headers `Deprecation: true`, `Link: </api/queue/{id}/cancel>; rel="successor-version"` | same as cancel |
+| DELETE | `/api/jobs/{id}` | HARD DELETE: job document, all its steps (prompts, responses, artifacts) and registered per-job data. `{deleted:true, job_id, previous_status, steps_deleted, was_queued}`; a queued/paused job is taken out of the queue (positions renumbered) | 404; 409 running ("stop it first, then delete it") |
+| POST | `/api/jobs/bulk-delete` body `{job_ids:[...]}` (1-500, duplicates/blank ignored) | 200 `{deleted:[ids in request order], deleted_count, skipped:[{job_id, reason:"running"\|"not_found"}]}` | 422 missing/empty/over 500 ids |
+| POST | `/api/jobs/delete-finished` | deletes every `done\|error\|stopped\|cancelled` job; same shape as bulk-delete | - |
 | GET | `/api/jobs/{id}/transcript` | `{job_id,title,status,model,arena_url,project_context,created_at,finished_at,step_total,steps_done,turns:[{step_index,step_title,status,prompt,response,error,artifact_paths,started_at,finished_at}]}` - one user (prompt) / assistant (response) turn per sent step, pending steps omitted | 404 |
 | GET | `/api/jobs/{id}/transcript.html` | `text/html; charset=utf-8` attachment `roadmap2arena-<id8>-transcript.html`: standalone (inline CSS, no scripts/external assets), all text HTML-escaped, fenced blocks as `<pre>` | 404 |
 | GET | `/api/jobs/{id}/files` | `[{path,step_index,versions:[step...],size,zip_path,zip_skip_reason}]` latest version per path (done steps), sorted by path | 404 |
@@ -85,6 +89,22 @@ UI labels: done = "Completed", error = "Failed", queued = "Queued" (not started 
 - Startup recovery still turns running jobs into error "interrupted by server
   restart"; such jobs are resumable.
 Log levels: `info|ok|warn|error`; the job keeps the last 500 entries.
+
+### Cancel vs delete
+
+- **Cancel** (`POST /api/queue/{id}/cancel`, UI: Job queue "Cancel job") only applies to
+  queued/paused jobs: status becomes `cancelled`, the job stays in history and can be
+  resumed or restarted. `DELETE /api/queue/{id}` is kept as a deprecated alias.
+- **Delete** (`DELETE /api/jobs/{id}`, bulk, delete-finished; UI: History detail "Delete",
+  History list "Select" mode with "Delete selected" and "Delete all finished") removes the
+  job for good. Running jobs are refused (409 / skipped "running"); queued/paused jobs are
+  removed from the queue. Deletion runs under the scheduler lock, so a queued job cannot start
+  while being deleted. Jobs that link to a deleted job (`restarted_from`/`cloned_from`) keep
+  the id; opening it shows "Could not load job ... not found" (no retry toast).
+- UI deletes use a two-click confirm (first click arms the button for 4 s: "Delete
+  permanently?" / "Delete N jobs?"; blur, Escape or timeout disarms).
+- Extension point: `deletion_routes.on_delete` callbacks `(db, job_id)` run after a delete
+  (failures are logged, never block the delete).
 
 ZIP rules: backslash -> `/`, strip leading `/` and `./`, skip paths with a `..`
 segment or an empty file name (each skip is written to the job log), unnamed
