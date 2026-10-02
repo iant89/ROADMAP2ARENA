@@ -11,22 +11,20 @@
 ## Test Request
 
 Agent: backend
-Date: 2026-10-01 21:10 ET
-Built or changed: real job queue (new job statuses "queued", "paused", "cancelled"; fields queue_position, queued_at, started_at; scheduler worker that starts the next unpaused queued job whenever nothing runs) and runtime settings stored in MongoDB (collection "settings", seeded from backend/.env). POST /api/jobs, restart and resume now ENQUEUE instead of returning 409 when a job is running. Frontend moved to top-level tabs (Create job | Job queue | Current job | Job history | Settings) on branch feat/tabs-and-queue.
-Key endpoints or flows: POST /api/jobs -> 201 {job_id, status: running|queued, queue_position}; GET /api/queue -> {running, queued[], count, waiting}; POST /api/queue/{id}/move {direction: up|down} or {position: n}; POST /api/queue/{id}/pause (moves to END of queue); POST /api/queue/{id}/unpause (keeps position); DELETE /api/queue/{id} (status cancelled, kept in history); GET /api/jobs?status=a,b&limit=1..200; GET/PUT /api/settings (arena_url http/https, model non-empty, step_delay_seconds 0-600, request_timeout_seconds 10-3600; partial PUT allowed, unknown keys 422); POST /api/settings/reset; GET /api/config now returns the current settings; restart/resume enqueue + regression of all earlier endpoints
+Date: 2026-10-01 22:10 ET
+Built or changed: job history and job detail (branch feat/history-panel, stacked on feat/tabs-and-queue). New read-only history endpoints (full transcript, standalone HTML export, file list, per-file download, clone source) and a new optional `cloned_from` on POST /api/jobs, stored on the job and returned in job detail, GET /api/jobs and GET /api/queue. Frontend: Current job tab shows "Waiting for next job" when nothing runs and picks up the next job automatically; Job history tab is a collapsible side panel (collapses to a rail, remembered in localStorage r2a.historyPanel.collapsed; on mobile the list gives way to an "All jobs" back bar when a job is open) with badges for every status (Queued, Running, Paused, Completed, Failed, Stopped, Cancelled), name and date; the job detail has Transcript / Files / Steps / Log tabs, Export transcript, per-file Download, Download ZIP and Clone job (prefilled editable sheet, submits a new queued/running job with cloned_from). URL state ?tab=history&job=<id>. Status labels changed: done -> "Completed", error -> "Failed" (API values unchanged).
+Key endpoints or flows: GET /api/jobs/{id}/transcript -> {job_id, title, model, arena_url, status, created_at, finished_at, project_context, step_total, steps_done, turns[{step_index, step_title, status, prompt, response, error, artifact_paths, started_at, finished_at}]} (pending steps omitted); GET /api/jobs/{id}/transcript.html -> attachment roadmap2arena-<id8>-transcript.html, text/html, inline CSS, no scripts/links/src, all text escaped; GET /api/jobs/{id}/files -> [{path, step_index, versions, size, zip_path, zip_skip_reason}]; GET /api/jobs/{id}/files/download?path=&step= -> text/plain attachment (latest version without step; 404 unknown job/file/version; 422 missing path or step outside 1..100000); GET /api/jobs/{id}/clone-source -> {source_job_id, title, arena_url, model, project_context, roadmap_md, step_total}; POST /api/jobs with cloned_from (422 "cloned_from: job X not found" for unknown ids; job log "Clone of job X"); regression of all earlier endpoints (queue, settings, controls)
 Data: real backend
 Features present: sessions no, auth no, integrations: arena2api via local stand-in only
 Retest: none
 Test accounts: none
 Notes:
-- Stand-in on http://127.0.0.1:9090 (backend http://127.0.0.1:8001/api, or via Caddy http://localhost:8080/api). Stub unchanged. Magic models: stub-503, stub-503-at-N, stub-503-once-at-N (per stub process - use a fresh N), stub-slow (5 s every call), stub-slow-at-N (5 s only on turn N). Use stub-slow for the running job so others stay queued; use gpt-4o (instant) for queued jobs you want to finish fast.
-- Timing: a job takes about steps x reply time + (steps - 1) x step delay (default delay 2 s from .env). With 2-step stub-slow jobs, each job runs ~12 s. The worker starts the next job right after a job ends or a stop is recorded (and re-checks every 5 s as a safety net), so allow ~1 s after a job ends before expecting the next one to be running.
-- Expected queue rules: exactly one running job; queue positions are always dense 1..n over queued + paused jobs, in order; move/pause/unpause/DELETE return 409 for jobs not queued/paused and 404 for unknown ids; move with neither or both of direction/position, a bad direction or position < 1 gives 422 (positions beyond the end clamp to last); pausing an already paused job is a no-op 200; paused jobs are skipped by the scheduler; stop on a queued/paused job gives 409 (use DELETE).
-- Restart: one active restart per source job (a second restart while the first is queued/paused/running is 409). Resume of a job that is already queued gives 409. Resume/restart responses now include status and queue_position. Cancelled jobs can be resumed or restarted.
-- Startup: running jobs become error "interrupted by server restart" (as before); queued/paused jobs keep their order and the next one starts automatically.
-- Settings changes apply to the NEXT run (new, resumed or restarted); the job log line "Job started: ..., step delay Xs, timeout Ys" shows the values used. Please reset settings afterwards (POST /api/settings/reset).
-- Tests changed by the main agent (minimal, commented in the code): tests/test_backend_api.py (test_second_job_409_while_running now expects 201 queued at position 1; test_concurrent_create_only_one_wins expects six 201s, one running, positions 1-5; test_config/key-set assertions include the new fields) and tests/test_job_controls.py (new job while a resume runs is queued; concurrent resume/new job/restart mix expects one resume 200 + three 409 + two 201; response key sets). New: tests/queue_smoke.sh (curl + jq, 58 checks, cleans up its jobs).
-- Put test scripts in /app/backend/tests/.
+- Stand-in on http://127.0.0.1:9090 (backend http://127.0.0.1:8001/api, or via Caddy http://localhost:8080/api). Stub unchanged. Magic models: stub-503, stub-503-at-N, stub-503-once-at-N (per stub process - use a fresh N), stub-slow (5 s every call), stub-slow-at-N (5 s only on turn N). gpt-4o replies instantly.
+- Timing: a job takes about steps x reply time + (steps - 1) x step delay (2 s default). The next queued job starts ~1 s after the running one ends.
+- History endpoints are read-only and work for every status (queued/paused jobs have no turns and no files yet). Files and transcript reflect the step versions stored on the job (a file replaced in a later step has versions > 1; ?step= picks a version). Paths the ZIP skips (e.g. "../evil.py") are listed with zip_skip_reason and are still downloadable individually as text.
+- Clone takes the edited form values, not the source values; cloned_from only links back. A clone of a clone is allowed.
+- Tests changed by the main agent (minimal, commented): key-set assertions now include cloned_from in tests/test_backend_api.py (2 places) and tests/test_queue_settings.py (1 place). New: tests/test_history.py (7 checks, cleans up its jobs). Results before handoff: run_tests.py 21/21, test_job_controls.py 17/17, test_queue_settings.py 10/10, test_history.py 7/7; UI e2e (Playwright) 30/30. Restart arena-stub before a full run (stub-503-once-at-N fires once per stub process).
+- Put test scripts in /app/backend/tests/. Please reset settings afterwards (POST /api/settings/reset).
 
 ## Issue Tracker
 
@@ -37,6 +35,17 @@ Notes:
 | F-001 | MAJOR | Frontend StartForm validation | Empty/whitespace model only disables Start job silently; no error message explains why (expected a clear error) | VERIFIED |
 | F-002 | MINOR | Frontend App URL state | Starting/opening a job does not put ?job=<id> in the URL, so a reload drops back to the empty form (job still reachable via Recent jobs) | SKIPPED |
 | B-003 | CRITICAL | POST /api/jobs/{id}/stop | Concurrent stop calls on a running job (4 parallel) all return 200 with status "running"; job and step stay "running" with no task (no stop log line), blocking every new job until stop is called again. Repeat cancel() in orchestrator.stop interrupts the CancelledError handler/mark_stopped in run_job | VERIFIED |
+| F-003 | MAJOR | Frontend HistoryDetail (mobile 390px) | Job detail tab bar (Transcript/Files/Steps/Log) is not wrapped in a horizontal scroller, so the history detail page is ~474px wide at 390px: page scrolls sideways, Log tab starts off-screen and the touch-emulated click on it failed (intercepted) | FIXED |
+| F-004 | MINOR | Frontend useJob / history deep link | ?tab=history&job=<unknown id> shows a "Lost contact with the backend ... retrying automatically" toast for a plain 404 (nothing is retried; the inline "Could not load job ... not found" message is correct) | SKIPPED |
+| F-005 | MINOR | Frontend api.listJobs / HistoryPanel | listJobs() drops queue_position from GET /api/jobs, so the history list never shows the "#N in queue" hint for queued jobs | SKIPPED |
+| V-001 | MAJOR | Frontend App main tab bar (390px) | Axiom Vision: "Current job" clipped, Job history and Settings off-screen with no cue. Below sm the tabs are icon-only (labels hidden sm:inline, aria-label on each), triggers flex-1, TabsList w-full - all 5 fit | FIXED |
+| V-002 | MAJOR | Frontend sub-tab bars (390px) | Axiom Vision: HistoryDetail (Transcript/Files/Steps/Log) and Current job (Artifacts/Transcript/Log) bars clipped. Mobile: grid w-full grid-cols-4 / grid-cols-3, triggers px-2 text-xs, count badges hidden sm:inline-flex; desktop unchanged | FIXED |
+| V-003 | MINOR | Frontend HeaderBar | Axiom Vision: running job name can crowd the progress bar. Name shrink-0 max-w-[16rem] truncate (title tooltip), progress bar flex-1 min-w-[8rem] | FIXED |
+| V-004 | MINOR | Frontend HistoryDetail / JobView | Axiom Vision: duplicate Download ZIP when the success banner shows. Header button hidden for done jobs; the banner button carries data-testid download-zip-button and the Packing state | FIXED |
+| V-005 | MINOR | Frontend HistoryPanel filters | Axiom Vision: status filter chips wrap to 2-3 rows. Single row flex flex-nowrap gap-1.5 overflow-x-auto pb-1, chips shrink-0 | FIXED |
+| V-006 | MINOR | Frontend HeaderBar (mobile) | Axiom Vision: tall mobile header. Queued count moved into the status row (icon + number below sm), subtitle hidden sm:block, "steps" word hidden below sm; header 96px at 390px | FIXED |
+| V-007 | MINOR | Frontend Clone form / StartForm | Axiom Vision: mixed input/textarea sizes and fonts. All four fields font-mono text-base sm:text-sm (16px mobile, 14px desktop) | FIXED |
+| V-008 | MINOR | Frontend SettingsTab | Axiom Vision: inconsistent ".env default" hint position. Label rows flex flex-wrap items-baseline justify-between gap-x-2, hint min-w-0 truncate (same pattern in StartForm field labels) | FIXED |
 
 ## Test Log
 
@@ -142,3 +151,58 @@ Retested: none (no Retest items or FIXED issues)
 Settings: original values matched the .env defaults (http://localhost:9090, gpt-4o, 2 s, 300 s); restored with POST /api/settings/reset and checked with GET.
 Not tested: backend restart with queued/paused jobs and with a running job ("interrupted by server restart") - the tester may not restart a running backend; request-timeout expiry itself (the stub cannot be slower than 5 s, so I only checked the timeout value in the job log); 500-entry log cap; real arena2api.
 
+### Backend test run - 2026-10-01 21:45 ET
+Tester: backend testing agent
+Scope: feat/history-panel (PR #4), run through Caddy (TEST_BASE_URL=http://localhost:8080) with direct 127.0.0.1:8001 checks. New suite /app/backend/tests/test_history_extra.py:
+- transcript JSON: shape, turns in step order matching the stored prompt/response/artifacts; pending steps omitted; queued/cancelled jobs have no turns; running and error turns are included.
+- transcript.html: text/html; charset=utf-8, attachment roadmap2arena-<id8>-transcript.html, DOCTYPE through </html>, tags balanced (parsed), only safe tags/attributes, no script/iframe/img/link/a. Escaping checked with <script>, &, quotes, </style>, <img onerror>, <iframe> and javascript: in the title, step titles, project context and description; emoji kept.
+- files: list shape, sorting, versions [1,3], zip_path/zip_skip_reason for ../evil.py and /abs/x.py, size equals the downloaded bytes; empty list for queued/running/error jobs.
+- files/download: bytes and text/plain; latest vs ?step=N; Content-Disposition basename. 23 traversal or unknown paths (../, %2e%2e, double-encoded, absolute, backslashes, NUL, file://, .env paths, 5000-char path) and raw encoded query strings -> 404 JSON, never file-system content. Missing/empty path and step 0/100001/-1/abc/1.5/2^70 -> 422.
+- clone-source: shape and values equal the source; cloned_from persists in detail, list and GET /api/queue; "Clone of job X" log line; clone of a clone works. Unknown/empty/long/non-string cloned_from -> 422 with nothing created; null -> no clone.
+- unknown/malformed ids -> 404 on all new endpoints; POST/PUT/DELETE/PATCH -> 405; no _id anywhere.
+Also ran Axiom's test_history.py 7/7 plus a regression of test_queue_settings.py 10/10, run_tests.py 21/21, test_job_controls.py 18/18 (ONCE_N=8; I did not restart arena-stub because restarting services is not allowed for the tester) and a direct-port sanity subset 6/6.
+Result: PASS
+Passed: 73   Failed: 0
+Failures: none
+Retested: none (no Retest items or FIXED issues)
+Settings: original values equal the .env defaults; reset with POST /api/settings/reset at the end and checked with GET.
+Notes: a %2F in the URL path (/files%2Fdownload) is decoded by the server and served by the normal route (only the job's own file), so this is not a bug. One test-file edit between runs triggered a uvicorn reload while no job was running.
+Not tested: backend restart with queued/running jobs; request-timeout expiry; real arena2api.
+
+### Frontend test run - 2026-10-01 21:54 ET
+Tester: frontend testing agent
+Scope: Full e2e of the tabbed dashboard (feat/history-panel, PR #4) at http://localhost:8080 in headless Chromium, desktop 1280x800 and mobile 390x844 (is_mobile + touch), real backend + :9090 stand-in. Every tab (Create, Job queue order/move up/down/pause/unpause/remove, Current job, Job history, Settings save/reset/persistence); Current job auto pick-up and reset to "Waiting for next job"; history panel collapse/expand + localStorage persistence; status badges; ?tab=history&job=<id> deep links (valid, invalid, reload; mobile back bar); job detail transcript, HTML export, per-file view/download, ZIP; Clone (prefill, edits, enqueue with cloned_from). Script: /app/frontend/tests/e2e_history.py (probes: mobile_probe.py, mobile_probe2.py, probe_badlink.py), state kept in /tmp. The Test Request says to put scripts in /app/backend/tests/, but the requester asked for /app/frontend/tests/. That is also safer, because the backend runs uvicorn --reload over that folder. No route interception needed. Settings were recorded first and restored afterwards (same four values, updated_at is new). 22 test jobs (test_xjqtf...) were removed from Mongo by id; no job delete API/UI exists (queue Remove only cancels).
+Result: FAIL
+Flows:
+desktop tabs (incl. unknown route, ?tab=bogus) - PASS
+desktop create_validation - PASS
+desktop settings - PASS
+desktop queue - PASS
+desktop pickup - PASS
+desktop stop_error - PASS
+desktop badges - PASS
+desktop panel_collapse - PASS
+desktop deep_link - PASS
+desktop detail - PASS
+desktop clone - PASS
+mobile clickables/overflow on top-level tabs - PASS
+mobile tabs - PASS
+mobile create_validation - PASS
+mobile settings - PASS
+mobile queue - PASS
+mobile pickup - PASS
+mobile stop_error - PASS
+mobile badges - PASS
+mobile panel_collapse - PASS
+mobile deep_link (incl. All jobs back bar, browser back) - PASS
+mobile detail - FAIL (transcript, export, file download, ZIP and Steps passed; Log tab click failed)
+mobile clone - PASS
+Failures:
+- [F-003][MAJOR] mobile detail, click Log tab in job detail (mobile only) - expected all four detail tabs inside the 390px viewport and clickable vs actual document is 474px wide (tabs-list right edge 474px, Log tab 370-472px), page scrolls sideways and the touch click on Log timed out (pointer intercepted) twice - HistoryDetail.jsx TabsList has no overflow-x-auto wrapper (the main tab bar in App.jsx has one). Screenshots /tmp/frontend-test/mobile_detail.png, mobile_detail_tabs_mobile.png
+- [F-004][MINOR] deep_link, unknown job id - expected only the not-found message vs actual extra toast "Lost contact with the backend ... retrying automatically" - useJob.js shows that toast for every error including 404. Screenshot /tmp/frontend-test/desktop_deep_link_invalid.png
+- [F-005][MINOR] history list, queued job row - expected "#N in queue" vs actual never shown - api.js listJobs() mapping omits queue_position
+Console errors: "Failed to load resource" 404 x15 (expected: invalid-id deep links), 422 x3 (expected: roadmap/parse with no steps). No page exceptions, no React warnings.
+Network failures: None (no requestfailed, no CORS errors, no wrong host, no missing /api prefix; only external requests are Google Fonts). /api >=400 only the expected 404/422 above.
+Retested: none (no Retest items, no FIXED issues; F-002 stays SKIPPED)
+Not tested: Resume/Restart controls beyond their presence; stub-503-once-at-N and stub-slow-at-N; arena-stub restart (not allowed); real arena2api. The brief "Waiting for next job" state between two queued jobs (~1 s, 2 s queue poll) was not caught by the sampler; the reset was confirmed after the last job and after a stop, and the automatic hand-over A -> C -> B was seen on desktop and mobile.
+Status list (status.jsx STATUS_META): pending, running, done (Completed), error (Failed), stopped, queued, paused, cancelled, idle; all 7 job statuses (Queued, Running, Paused, Completed, Failed, Stopped, Cancelled) were produced and their badges seen in the history list and filter chips.

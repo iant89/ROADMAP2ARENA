@@ -4,8 +4,8 @@ import { cn } from '@/lib/utils'
 export const STATUS_META = {
   pending: { label: 'Pending', icon: Circle, tone: 'text-slate', chip: 'bg-muted text-muted-foreground border-border' },
   running: { label: 'Running', icon: Loader2, tone: 'text-amber', chip: 'bg-amber-soft text-amber border-amber/30' },
-  done: { label: 'Done', icon: CheckCircle2, tone: 'text-teal', chip: 'bg-teal-soft text-teal border-teal/30' },
-  error: { label: 'Error', icon: XCircle, tone: 'text-coral', chip: 'bg-coral-soft text-coral border-coral/30' },
+  done: { label: 'Completed', icon: CheckCircle2, tone: 'text-teal', chip: 'bg-teal-soft text-teal border-teal/30' },
+  error: { label: 'Failed', icon: XCircle, tone: 'text-coral', chip: 'bg-coral-soft text-coral border-coral/30' },
   stopped: { label: 'Stopped', icon: CircleStop, tone: 'text-stop', chip: 'bg-stop-soft text-stop border-stop/30' },
   queued: { label: 'Queued', icon: ListOrdered, tone: 'text-queue', chip: 'bg-queue-soft text-queue border-queue/30' },
   paused: { label: 'Paused', icon: Pause, tone: 'text-pause', chip: 'bg-pause-soft text-pause border-pause/35 border-dashed' },

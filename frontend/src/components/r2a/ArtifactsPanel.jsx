@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, ChevronRight, Copy, FileCode2, Folder, FolderOpen, PackageOpen, RefreshCw } from 'lucide-react'
+import { Check, ChevronRight, Copy, Download, FileCode2, Folder, FolderOpen, PackageOpen, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
-import { getArtifactContent } from '@/lib/api'
+import { downloadFile, getArtifactContent } from '@/lib/api'
 import { Skeleton } from '@/components/ui/skeleton'
 
 function buildTree(artifacts) {
@@ -103,7 +103,19 @@ function useArtifactContent(jobId, artifact) {
 
 function CodeView({ jobId, artifact, stepTitle }) {
   const [copied, setCopied] = useState(false)
+  const [saving, setSaving] = useState(false)
   const { content, error, retry } = useArtifactContent(jobId, artifact)
+  const save = async () => {
+    setSaving(true)
+    try {
+      const res = await downloadFile(jobId, artifact.path, artifact.step_index)
+      toast.success('File downloaded', { description: `${res.filename} (version from step ${artifact.step_index})` })
+    } catch (err) {
+      toast.error('Download failed', { description: err.message })
+    } finally {
+      setSaving(false)
+    }
+  }
   const lines = (content ?? '').replace(/\n$/, '').split('\n')
   const copy = async () => {
     try {
@@ -127,6 +139,9 @@ function CodeView({ jobId, artifact, stepTitle }) {
         </span>
         <Button variant="ghost" size="sm" className="ml-auto" onClick={copy} disabled={content === null}>
           {copied ? <Check className="text-teal" /> : <Copy />} {copied ? 'Copied' : 'Copy'}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={save} disabled={saving} data-testid="file-download-button">
+          <Download /> {saving ? 'Saving...' : 'Download'}
         </Button>
       </div>
       {error && (

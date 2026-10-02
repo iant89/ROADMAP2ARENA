@@ -18,9 +18,11 @@ function EmptyState({ queue, onOpenJob, onOpenQueue, onCreate }) {
     <div className="mx-auto max-w-xl p-5 lg:p-10" data-testid="current-empty">
       <div className="rounded-xl border border-dashed border-input bg-paper px-6 py-10 text-center">
         <Activity className="mx-auto size-7 text-muted-foreground" />
-        <p className="mt-3 text-base font-semibold">Nothing is running</p>
+        <p className="mt-3 text-base font-semibold" data-testid="current-empty-title">Waiting for next job</p>
         <p className="mt-1 text-[13px] text-muted-foreground">
-          {waiting ? `${waiting} job${waiting === 1 ? ' is' : 's are'} in the queue${queue.waiting ? '' : ', all paused'}.` : 'Add a job and it starts right away.'}
+          Nothing is running. {waiting
+            ? `${waiting} job${waiting === 1 ? ' is' : 's are'} in the queue${queue.waiting ? '' : ', all paused - unpause one to start it'}.`
+            : 'The next job you add (or the next queued job) shows up here automatically.'}
         </p>
         <div className="mt-5 flex flex-wrap justify-center gap-2">
           <Button size="sm" onClick={onCreate}><PlusCircle /> Create a job</Button>
@@ -45,17 +47,10 @@ function EmptyState({ queue, onOpenJob, onOpenQueue, onCreate }) {
   )
 }
 
-// Current job tab: the running job's full view. When it finishes, its final state
-// stays visible (with a note) until the next job starts.
-export default function CurrentJobTab({ queue, lastRunId, onOpenJob, onOpenQueue, onCreate, onQueueChanged }) {
+// Current job tab: the running job's full view. When it ends and nothing else runs,
+// the tab resets to "Waiting for next job"; the next job that starts appears automatically.
+export default function CurrentJobTab({ queue, onOpenJob, onOpenQueue, onCreate, onQueueChanged }) {
   const runningId = queue?.running?.job_id ?? null
-  const shownId = runningId || lastRunId
-  if (!shownId) return <EmptyState queue={queue} onOpenJob={onOpenJob} onOpenQueue={onOpenQueue} onCreate={onCreate} />
-  const banner = !runningId && (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-paper px-3.5 py-2.5 text-[13px] text-muted-foreground" data-testid="current-finished-note">
-      <Activity className="size-4" /> Nothing is running now - this is the last job that ran.
-      {queue?.count ? <Button size="xs" variant="outline" onClick={onOpenQueue} className="ml-auto">Queue ({queue.count})</Button> : null}
-    </div>
-  )
-  return <JobView key={shownId} jobId={shownId} banner={banner} onOpenJob={onOpenJob} onOpenQueue={onOpenQueue} onQueueChanged={onQueueChanged} />
+  if (!runningId) return <EmptyState key={queue?.running === null ? 'idle' : 'loading'} queue={queue} onOpenJob={onOpenJob} onOpenQueue={onOpenQueue} onCreate={onCreate} />
+  return <JobView key={runningId} jobId={runningId} onOpenJob={onOpenJob} onOpenQueue={onOpenQueue} onQueueChanged={onQueueChanged} />
 }

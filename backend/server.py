@@ -21,6 +21,7 @@ import settings
 from artifact_extractor import clean_zip_path
 from database import db, mongo
 from orchestrator import append_log, now_iso
+from history_routes import router as history_router
 from queue_routes import queue_state, router as queue_router
 from roadmap_parser import parse_roadmap, roadmap_title
 
@@ -86,6 +87,7 @@ class JobCreate(BaseModel):
     model: str | None = None
     project_context: str = ""
     roadmap_md: str = Field(default="")
+    cloned_from: str | None = None  # source job id when submitted from "Clone job"
 
 
 def validate_job_input(body: JobCreate, cfg: dict) -> tuple[str, str, list[dict]]:
@@ -128,7 +130,7 @@ def validate_overrides(body: JobOverrides | None, job: dict) -> tuple[str, str]:
 
 
 async def insert_job(arena_url: str, model: str, project_context: str, roadmap_md: str,
-                     steps: list[dict], restarted_from: str | None = None) -> str:
+                     steps: list[dict], restarted_from: str | None = None, cloned_from: str | None = None) -> str:
     """Insert a job at the end of the queue. Call under scheduler.lock."""
     job_id = str(uuid.uuid4())
     ts = now_iso()
@@ -138,7 +140,7 @@ async def insert_job(arena_url: str, model: str, project_context: str, roadmap_m
         "arena_url": arena_url, "model": model, "project_context": project_context,
         "roadmap_md": roadmap_md, "title": roadmap_title(roadmap_md) or steps[0]["title"],
         "step_total": len(steps), "steps_done": 0, "error": None, "failed_step": None,
-        "stopped_step": None, "restarted_from": restarted_from, "log": [],
+        "stopped_step": None, "restarted_from": restarted_from, "cloned_from": cloned_from, "log": [],
     })
     await db.steps.insert_many([{
         "job_id": job_id, "index": s["index"], "title": s["title"], "description": s["description"],
@@ -147,6 +149,8 @@ async def insert_job(arena_url: str, model: str, project_context: str, roadmap_m
     } for s in steps])
     if restarted_from:
         await append_log(db, job_id, "info", f"Restart of job {restarted_from}")
+    if cloned_from:
+        await append_log(db, job_id, "info", f"Clone of job {cloned_from}")
     await append_log(db, job_id, "info", "Added to the queue")
     return job_id
 
@@ -183,8 +187,11 @@ async def parse(body: ParseRequest):
 @api.post("/jobs", status_code=201)
 async def create_job(body: JobCreate):
     arena_url, model, steps = validate_job_input(body, await app_settings.get(db))
+    if body.cloned_from is not None and not await db.jobs.find_one({"id": body.cloned_from}, {"_id": 1}):
+        raise HTTPException(status_code=422, detail=f"cloned_from: job {body.cloned_from} not found")
     async with scheduler.lock:
-        job_id = await insert_job(arena_url, model, body.project_context, body.roadmap_md, steps)
+        job_id = await insert_job(arena_url, model, body.project_context, body.roadmap_md, steps,
+                                  cloned_from=body.cloned_from)
         await scheduler.start_next_locked(db)
         await queued_note(job_id)
         state = await queue_state(job_id)
@@ -192,7 +199,7 @@ async def create_job(body: JobCreate):
 
 
 LIST_FIELDS = ("status", "created_at", "step_total", "steps_done", "title", "model", "failed_step", "stopped_step",
-               "restarted_from", "queue_position", "queued_at", "started_at", "finished_at")
+               "restarted_from", "cloned_from", "queue_position", "queued_at", "started_at", "finished_at")
 
 
 @api.get("/jobs")
@@ -222,6 +229,7 @@ async def get_job(job_id: str):
         "failed_step": job.get("failed_step"),
         "stopped_step": job.get("stopped_step"),
         "restarted_from": job.get("restarted_from"),
+        "cloned_from": job.get("cloned_from"),
         "queue_position": job.get("queue_position"),
         "queued_at": job.get("queued_at"),
         "started_at": job.get("started_at"),
@@ -370,3 +378,4 @@ async def download(job_id: str):
 
 app.include_router(api)
 app.include_router(queue_router)
+app.include_router(history_router)

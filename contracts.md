@@ -14,7 +14,7 @@ FastAPI's `{"detail": "..."}` shape.
 | PUT | `/api/settings` body: any subset of the 4 fields | same shape as GET (saved) | 422 unknown key, arena_url not http(s), empty model, delay not 0-600, timeout not 10-3600, non-number/bool, bad JSON |
 | POST | `/api/settings/reset` | same shape as GET, values = backend/.env | - |
 | POST | `/api/roadmap/parse` body `{roadmap_md}` | `{steps:[{index,title,description}], title}` | 422 no steps / bad body |
-| POST | `/api/jobs` body `{arena_url?, model?, project_context?, roadmap_md}` (defaults from settings) | 201 `{job_id, status:"running"\|"queued", queue_position}` (never 409 - busy means queued) | 422 arena_url not http(s), empty model, empty roadmap or no steps |
+| POST | `/api/jobs` body `{arena_url?, model?, project_context?, roadmap_md, cloned_from?}` (defaults from settings; `cloned_from` = source job id from "Clone job", 422 if unknown) | 201 `{job_id, status:"running"\|"queued", queue_position}` (never 409 - busy means queued) | 422 arena_url not http(s), empty model, empty roadmap or no steps |
 | GET | `/api/jobs?status=a,b&limit=n` | most recent first, default 20, `limit` 1-200: `[{job_id,status,created_at,step_total,steps_done,title,model,failed_step,stopped_step,restarted_from,queue_position,queued_at,started_at,finished_at,paused}]` | 422 unknown status / limit out of range |
 | GET | `/api/jobs/{id}` | `{job_id,status,error,failed_step,stopped_step,restarted_from,queue_position,queued_at,started_at,title,created_at,finished_at,arena_url,model,project_context,roadmap_md,step_total,steps_done,steps:[{index,title,description,status,error,artifact_paths}],log:[{ts,level,msg}]}` | 404 |
 | GET | `/api/jobs/{id}/steps/{index}` | full step: `{job_id,index,title,description,status,prompt,response,error,artifacts:[{path,content}],started_at,finished_at}` | 404 job or step |
@@ -26,10 +26,17 @@ FastAPI's `{"detail": "..."}` shape.
 | POST | `/api/queue/{id}/pause` | `{job_id,status:"paused",queue_position}` - moved to the END of the queue (idempotent) | 404; 409 not queued/paused |
 | POST | `/api/queue/{id}/unpause` | `{job_id,status,queue_position}` - eligible again, keeps its position; may start at once | 404; 409 not queued/paused |
 | DELETE | `/api/queue/{id}` | `{job_id,status:"cancelled",queue_position:null}` - kept in history | 404; 409 not queued/paused |
+| GET | `/api/jobs/{id}/transcript` | `{job_id,title,status,model,arena_url,project_context,created_at,finished_at,step_total,steps_done,turns:[{step_index,step_title,status,prompt,response,error,artifact_paths,started_at,finished_at}]}` - one user (prompt) / assistant (response) turn per sent step, pending steps omitted | 404 |
+| GET | `/api/jobs/{id}/transcript.html` | `text/html; charset=utf-8` attachment `roadmap2arena-<id8>-transcript.html`: standalone (inline CSS, no scripts/external assets), all text HTML-escaped, fenced blocks as `<pre>` | 404 |
+| GET | `/api/jobs/{id}/files` | `[{path,step_index,versions:[step...],size,zip_path,zip_skip_reason}]` latest version per path (done steps), sorted by path | 404 |
+| GET | `/api/jobs/{id}/files/download?path=<p>&step=<n>` | `text/plain; charset=utf-8` attachment (file name = basename); latest version, or the version from step n | 404 job/file/version; 422 missing path, step outside 1..100000 |
+| GET | `/api/jobs/{id}/clone-source` | `{source_job_id,title,arena_url,model,project_context,roadmap_md,step_total}` for the prefilled Clone form | 404 |
 | GET | `/api/jobs/{id}/download` | `application/zip`, latest version per path | 404 unknown job; 409 no artifacts |
 
 Statuses: job `queued|paused|running|done|error|stopped|cancelled`; step `pending|running|done|error|stopped`.
 Finished (history) = `done|error|stopped|cancelled`; resumable = `error|stopped|cancelled`.
+UI labels: done = "Completed", error = "Failed", queued = "Queued" (not started yet).
+`cloned_from` (source job id or null) is on job detail, the job list and queue summaries.
 
 ### Job queue (backend/scheduler.py)
 
@@ -123,11 +130,20 @@ blocks are never stored as artifacts.
 - `useJob` polls `GET /api/jobs/{id}` every 1.5 s while running/queued/paused;
   transient errors keep the last state and retry. `useQueue` polls `GET /api/queue`
   every 2 s (header status + progress, queue badge, Current job).
+- Current job shows the running job; when it ends and nothing else runs it resets to
+  "Waiting for next job", and the next started job appears automatically (queue poll).
+  Finish/fail toasts are global (App, from the queue poll).
+- Job history: collapsible side panel (narrow rail of status icons when collapsed; state
+  in localStorage `r2a.historyPanel.collapsed`) listing up to 200 jobs of every status
+  (polled every 4 s, search + status filter). The detail view (`?tab=history&job=<id>`)
+  has Clone job (Sheet with the prefilled editable form -> `POST /api/jobs` with
+  `cloned_from`), Export transcript (HTML download), Download ZIP, Resume/Restart/Stop,
+  and Transcript (chat view from `GET /transcript`) | Files (view, copy, per-file
+  download) | Steps | Log tabs.
 - Top-level tabs: Create job | Job queue | Current job | Job history | Settings.
   URL keeps place: `?tab=create|queue|current|history|settings&job=<id>` (job only for
   history); a bare `/?job=<id>` opens that job in Job history. The Recent jobs sheet
-  was replaced by Job history (`GET /api/jobs?status=done,error,stopped,cancelled&limit=200`,
-  client-side search + status filter).
+  was replaced by Job history.
 - Artifact contents and transcript prompt/response are fetched on demand via
   `GET /steps/{index}` (finished steps cached).
 - ZIP via `GET /download`; filename from Content-Disposition.
