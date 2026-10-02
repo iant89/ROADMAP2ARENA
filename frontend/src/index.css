@@ -15,6 +15,8 @@
     --color-coral: var(--r2a-coral);
     --color-coral-soft: var(--r2a-coral-soft);
     --color-slate: var(--r2a-slate);
+    --color-stop: var(--r2a-stop);
+    --color-stop-soft: var(--r2a-stop-soft);
     --color-ink: var(--r2a-ink);
     --color-ink-foreground: var(--r2a-ink-foreground);
     --color-paper: var(--r2a-paper);
@@ -98,6 +100,8 @@
     --r2a-coral: #B03A24;
     --r2a-coral-soft: #F9E1DA;
     --r2a-slate: #6B7585;
+    --r2a-stop: #6E5F44;
+    --r2a-stop-soft: #EEE8DC;
     --r2a-ink: #171A1F;
     --r2a-ink-foreground: #E7E2D8;
     --r2a-paper: #FBFAF7;

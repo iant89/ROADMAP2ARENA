@@ -15,9 +15,30 @@ FastAPI's `{"detail": "..."}` shape.
 | GET | `/api/jobs` | 20 most recent: `[{job_id,status,created_at,step_total,steps_done,title,model,failed_step}]` | - |
 | GET | `/api/jobs/{id}` | `{job_id,status,error,failed_step,title,created_at,finished_at,arena_url,model,project_context,roadmap_md,step_total,steps_done,steps:[{index,title,description,status,error,artifact_paths}],log:[{ts,level,msg}]}` | 404 |
 | GET | `/api/jobs/{id}/steps/{index}` | full step: `{job_id,index,title,description,status,prompt,response,error,artifacts:[{path,content}],started_at,finished_at}` | 404 job or step |
+| POST | `/api/jobs/{id}/stop` | `{job_id,status:"stopped",stopped_step,steps_done}` | 404; 409 job not running |
+| POST | `/api/jobs/{id}/restart` body `{arena_url?, model?}` (optional) | 201 `{job_id}` of a NEW job | 404; 409 job running or any job running; 422 bad override |
+| POST | `/api/jobs/{id}/resume` body `{arena_url?, model?}` (optional) | `{job_id,status:"running",resumed_from_step}` (same job) | 404; 409 job done/running, any job running, or nothing left; 422 bad override |
 | GET | `/api/jobs/{id}/download` | `application/zip`, latest version per path | 404 unknown job; 409 no artifacts |
 
-Statuses: job `running|done|error`; step `pending|running|done|error`.
+Statuses: job `running|done|error|stopped`; step `pending|running|done|error|stopped`.
+Job detail also has `stopped_step` and `restarted_from`; the job list has `stopped_step`.
+
+### Job controls
+
+- **Stop** cancels the job's asyncio task (registry by job_id). The in-flight arena
+  request is abandoned; the running step becomes `stopped` (response discarded),
+  later steps stay pending, job `stopped` with `finished_at` and a log line. A step
+  is only marked done while still `running`, so nothing flips to done afterwards.
+- **Restart** copies arena_url, model, project_context and roadmap_md (with optional
+  overrides) into a new job (`restarted_from` = old id) that runs from step 1.
+- **Resume** continues the same job from the first non-done step: that step and later
+  ones are reset to pending (prompt/response/artifacts/error cleared), job error
+  cleared, log "Resumed from step k". The orchestrator rebuilds the chat history from
+  the done steps' stored prompt/response pairs (user, assistant, in order) and the
+  file list from their artifacts, so the resumed request carries the full history.
+- Restart and resume share the one-job-at-a-time lock with POST /api/jobs.
+- Startup recovery still turns running jobs into error "interrupted by server
+  restart"; such jobs are resumable.
 Log levels: `info|ok|warn|error`; the job keeps the last 500 entries.
 
 ZIP rules: backslash -> `/`, strip leading `/` and `./`, skip paths with a `..`
@@ -74,4 +95,7 @@ blocks are never stored as artifacts.
   127.0.0.1:9090 (supervisor program `arena-stub`). Magic models: `stub-503`,
   `stub-503-at-N`, `stub-slow`. Turn-dependent canned replies include a
   `lang:path` block, a `# filename:` block, an unnamed block, `../evil.py` and
-  `/abs/x.py`.
+  `/abs/x.py`. More magic models: `stub-503-once-at-N` (503 on turn N only the
+  first time per stub process), `stub-slow-at-N` (slow only on turn N). Every reply
+  starts with "(stub reply for user turn N of the conversation)", which makes the
+  resume history rebuild observable.

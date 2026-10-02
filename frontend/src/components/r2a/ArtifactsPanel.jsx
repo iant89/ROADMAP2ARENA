@@ -104,7 +104,7 @@ function useArtifactContent(jobId, artifact) {
 function CodeView({ jobId, artifact, stepTitle }) {
   const [copied, setCopied] = useState(false)
   const { content, error, retry } = useArtifactContent(jobId, artifact)
-  const lines = (content ?? '').split('\n')
+  const lines = (content ?? '').replace(/\n$/, '').split('\n')
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(content ?? '')

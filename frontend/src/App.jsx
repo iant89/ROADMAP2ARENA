@@ -8,7 +8,7 @@ import HeaderBar from '@/components/r2a/HeaderBar'
 import LeftPane from '@/components/r2a/LeftPane'
 import WorkspaceTabs from '@/components/r2a/WorkspaceTabs'
 import RecentJobsSheet from '@/components/r2a/RecentJobsSheet'
-import { backendUrl, downloadZip, getConfig, getJob, parseRoadmap, startJob } from '@/lib/api'
+import { backendUrl, downloadZip, getConfig, getJob, parseRoadmap, restartJob, resumeJob, startJob, stopJob } from '@/lib/api'
 import { useJob } from '@/hooks/useJob'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { SAMPLE_PROJECT_CONTEXT, SAMPLE_ROADMAP } from '@/constants/sampleRoadmap'
@@ -22,7 +22,8 @@ export default function App() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [steps, setSteps] = useState([])
   const [activeJobId, setActiveJobId] = useState(null)
-  const { job, error: jobError, refresh } = useJob(activeJobId)
+  const { job, error: jobError, refresh, restartPolling } = useJob(activeJobId)
+  const [controlsBusy, setControlsBusy] = useState(false)
   const [configError, setConfigError] = useState(null)
   const [configAttempt, setConfigAttempt] = useState(0)
   const [parseError, setParseError] = useState(null)
@@ -112,6 +113,56 @@ export default function App() {
     }
   }
 
+  const applyOverridesToForm = (overrides) => {
+    if (!overrides) return
+    setForm((f) => ({ ...f, arena_url: overrides.arena_url.trim() || f.arena_url, model: overrides.model.trim() || f.model }))
+  }
+
+  const handleStop = async () => {
+    if (!job) return
+    setControlsBusy(true)
+    try {
+      const res = await stopJob(job.id)
+      toast(`Job stopped${res.stopped_step ? ` at step ${res.stopped_step}` : ''}`, { description: `${res.steps_done} of ${job.step_total} steps finished. Resume or Restart when ready.` })
+    } catch (err) {
+      toast.error('Could not stop job', { description: err.message })
+    } finally {
+      setControlsBusy(false)
+      refresh()
+    }
+  }
+
+  const handleResume = async (overrides) => {
+    if (!job) return
+    setControlsBusy(true)
+    try {
+      const res = await resumeJob(job.id, overrides)
+      applyOverridesToForm(overrides)
+      toast.success(`Resumed from step ${res.resumed_from_step}`, { description: 'Earlier steps are replayed as conversation history.' })
+      restartPolling()
+    } catch (err) {
+      toast.error('Could not resume job', { description: err.message })
+    } finally {
+      setControlsBusy(false)
+    }
+  }
+
+  const handleRestart = async (overrides) => {
+    if (!job) return
+    setControlsBusy(true)
+    try {
+      const { id } = await restartJob(job.id, overrides)
+      applyOverridesToForm(overrides)
+      setSelectedPath(null)
+      setActiveJobId(id)
+      toast.success('Restarted as a new job', { description: `New job ${id.slice(0, 8)} runs all ${job.step_total} steps from the beginning.` })
+    } catch (err) {
+      toast.error('Could not restart job', { description: err.message })
+    } finally {
+      setControlsBusy(false)
+    }
+  }
+
   const handleDownload = useCallback(async () => {
     if (!job) return
     setDownloading(true)
@@ -140,6 +191,10 @@ export default function App() {
       setFormExpanded={setFormExpanded}
       onClearJob={() => { setActiveJobId(null); setSelectedPath(null) }}
       onDownload={handleDownload}
+      controlsBusy={controlsBusy}
+      onStop={handleStop}
+      onResume={handleResume}
+      onRestart={handleRestart}
     />
   )
   const right = <WorkspaceTabs job={job} tab={tab} setTab={setTab} selectedPath={selectedPath} setSelectedPath={setSelectedPath} />

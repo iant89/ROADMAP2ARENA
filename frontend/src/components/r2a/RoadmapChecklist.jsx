@@ -54,6 +54,7 @@ export default function RoadmapChecklist({ steps, job }) {
                   'transition-[border-color,box-shadow,background-color] duration-200',
                   status === 'running' && 'border-amber/40 bg-amber-soft/60 shadow-sm',
                   status === 'error' && 'border-coral/40 bg-coral-soft/60',
+                  status === 'stopped' && 'border-stop/40 bg-stop-soft/70',
                   status === 'done' && 'border-border',
                   status === 'pending' && 'border-border',
                 )}
@@ -72,6 +73,7 @@ export default function RoadmapChecklist({ steps, job }) {
                     {status === 'error' && step.error && (
                       <p className="mt-1.5 text-xs font-medium text-coral" data-testid="step-error-message">{step.error}</p>
                     )}
+                    {status === 'stopped' && <p className="mt-1.5 text-xs font-medium text-stop">Stopped by operator - response discarded</p>}
                     {status === 'done' && step.files?.length > 0 && (
                       <p className="mt-1.5 text-xs text-teal">{step.files.length} file{step.files.length === 1 ? '' : 's'} generated</p>
                     )}

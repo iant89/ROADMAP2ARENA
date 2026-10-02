@@ -108,6 +108,8 @@ function toJobView(dto) {
     error: dto.error,
     error_hint: hint,
     failed_step: dto.failed_step,
+    stopped_step: dto.stopped_step ?? null,
+    restarted_from: dto.restarted_from ?? null,
     steps: dto.steps.map((s) => ({ ...s, files: s.artifact_paths || [] })),
     artifacts: Object.values(latest).sort((a, b) => a.path.localeCompare(b.path)),
     log: dto.log || [],
@@ -150,7 +152,37 @@ export async function listJobs() {
     steps_done: j.steps_done,
     step_total: j.step_total,
     failed_step: j.failed_step,
+    stopped_step: j.stopped_step ?? null,
   }))
+}
+
+// ---------------------------------------------------------------- job controls
+function overridesBody(overrides) {
+  const body = {}
+  if (overrides?.arena_url?.trim()) body.arena_url = overrides.arena_url.trim()
+  if (overrides?.model?.trim()) body.model = overrides.model.trim()
+  return Object.keys(body).length ? body : undefined
+}
+
+function forgetSteps(jobId) {
+  for (const key of [...stepCache.keys()]) if (key.startsWith(`${jobId}:`)) stepCache.delete(key)
+}
+
+// Stops a running job. Resolves to { job_id, status, stopped_step, steps_done }.
+export async function stopJob(id) {
+  return request(`/jobs/${encodeURIComponent(id)}/stop`, { method: 'POST' })
+}
+
+// Continues the same job from its first unfinished step (error/stopped jobs).
+export async function resumeJob(id, overrides) {
+  forgetSteps(id)
+  return request(`/jobs/${encodeURIComponent(id)}/resume`, { method: 'POST', body: overridesBody(overrides) })
+}
+
+// Creates a new job from a finished one. Resolves to { id } of the new job.
+export async function restartJob(id, overrides) {
+  const res = await request(`/jobs/${encodeURIComponent(id)}/restart`, { method: 'POST', body: overridesBody(overrides) })
+  return { id: res.job_id }
 }
 
 function filenameFrom(res, fallback) {

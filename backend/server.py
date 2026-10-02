@@ -31,6 +31,8 @@ db = mongo[settings.DB_NAME]
 INTERRUPTED = "interrupted by server restart"
 # Upper bound for step indexes in URLs; keeps values inside Mongo's 64-bit int range.
 MAX_STEP_INDEX = 100_000
+FINISHED = ("done", "error", "stopped")
+RESUMABLE = ("error", "stopped")
 # Serialises the running-job check + insert + task start (single uvicorn process).
 _job_start_lock = asyncio.Lock()
 
@@ -99,6 +101,52 @@ def validate_job_input(body: JobCreate) -> tuple[str, str, list[dict]]:
     return arena_url, model, steps
 
 
+class JobOverrides(BaseModel):
+    """Optional overrides for restart/resume (e.g. to fix a wrong model)."""
+    arena_url: str | None = None
+    model: str | None = None
+
+
+def validate_overrides(body: JobOverrides | None, job: dict) -> tuple[str, str]:
+    arena_url = (body.arena_url if body and body.arena_url is not None else job["arena_url"]).strip()
+    model = (body.model if body and body.model is not None else job["model"]).strip()
+    errors = []
+    parsed = urlparse(arena_url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        errors.append("arena_url must be an http:// or https:// URL")
+    if not model:
+        errors.append("model must not be empty")
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
+    return arena_url, model
+
+
+async def any_job_running() -> bool:
+    return orchestrator.is_running() or bool(await db.jobs.find_one({"status": "running"}, {"_id": 1}))
+
+
+async def insert_job(arena_url: str, model: str, project_context: str, roadmap_md: str,
+                     steps: list[dict], restarted_from: str | None = None) -> str:
+    job_id = str(uuid.uuid4())
+    ts = now_iso()
+    await db.jobs.insert_one({
+        "id": job_id, "status": "running", "created_at": ts, "updated_at": ts, "finished_at": None,
+        "arena_url": arena_url, "model": model, "project_context": project_context,
+        "roadmap_md": roadmap_md, "title": roadmap_title(roadmap_md) or steps[0]["title"],
+        "step_total": len(steps), "steps_done": 0, "error": None, "failed_step": None,
+        "stopped_step": None, "restarted_from": restarted_from, "log": [],
+    })
+    await db.steps.insert_many([{
+        "job_id": job_id, "index": s["index"], "title": s["title"], "description": s["description"],
+        "status": "pending", "prompt": "", "response": "", "error": None, "artifacts": [],
+        "started_at": None, "finished_at": None,
+    } for s in steps])
+    if restarted_from:
+        await append_log(db, job_id, "info", f"Restart of job {restarted_from}")
+    orchestrator.start(db, job_id)
+    return job_id
+
+
 async def get_job_or_404(job_id: str) -> dict:
     job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     if not job:
@@ -128,30 +176,19 @@ async def parse(body: ParseRequest):
 async def create_job(body: JobCreate):
     arena_url, model, steps = validate_job_input(body)
     async with _job_start_lock:
-        if orchestrator.is_running() or await db.jobs.find_one({"status": "running"}, {"_id": 1}):
+        if await any_job_running():
             raise HTTPException(status_code=409, detail="A job is already running - wait for it to finish")
-        job_id = str(uuid.uuid4())
-        ts = now_iso()
-        await db.jobs.insert_one({
-            "id": job_id, "status": "running", "created_at": ts, "updated_at": ts, "finished_at": None,
-            "arena_url": arena_url, "model": model, "project_context": body.project_context,
-            "roadmap_md": body.roadmap_md, "title": roadmap_title(body.roadmap_md) or steps[0]["title"],
-            "step_total": len(steps), "steps_done": 0, "error": None, "failed_step": None, "log": [],
-        })
-        await db.steps.insert_many([{
-            "job_id": job_id, "index": s["index"], "title": s["title"], "description": s["description"],
-            "status": "pending", "prompt": "", "response": "", "error": None, "artifacts": [],
-            "started_at": None, "finished_at": None,
-        } for s in steps])
-        orchestrator.start(db, job_id)
+        job_id = await insert_job(arena_url, model, body.project_context, body.roadmap_md, steps)
     return {"job_id": job_id}
 
 
 @api.get("/jobs")
 async def list_jobs():
     cursor = db.jobs.find({}, {"_id": 0, "id": 1, "status": 1, "created_at": 1, "step_total": 1,
-                               "steps_done": 1, "title": 1, "model": 1, "failed_step": 1}).sort("created_at", -1).limit(20)
-    return [{"job_id": j.pop("id"), **j} async for j in cursor]
+                               "steps_done": 1, "title": 1, "model": 1, "failed_step": 1,
+                               "stopped_step": 1}).sort("created_at", -1).limit(20)
+    fields = ("status", "created_at", "step_total", "steps_done", "title", "model", "failed_step", "stopped_step")
+    return [{"job_id": j["id"], **{k: j.get(k) for k in fields}} async for j in cursor]
 
 
 @api.get("/jobs/{job_id}")
@@ -163,6 +200,8 @@ async def get_job(job_id: str):
         "status": job["status"],
         "error": job.get("error"),
         "failed_step": job.get("failed_step"),
+        "stopped_step": job.get("stopped_step"),
+        "restarted_from": job.get("restarted_from"),
         "title": job.get("title"),
         "created_at": job["created_at"],
         "finished_at": job.get("finished_at"),
@@ -190,6 +229,79 @@ async def get_step(job_id: str, index: int):
     if not step:
         raise HTTPException(status_code=404, detail=f"Step {index} of job {job_id} not found")
     return step
+
+
+@api.post("/jobs/{job_id}/stop")
+async def stop_job(job_id: str):
+    job = await get_job_or_404(job_id)
+    if job["status"] != "running":
+        raise HTTPException(status_code=409, detail=f"Job is {job['status']}, only a running job can be stopped")
+    if not await orchestrator.stop(db, job_id):
+        # No task yet/anymore. Take the start lock so a resume that already set the
+        # job running has also started its task, then decide.
+        async with _job_start_lock:
+            if orchestrator.is_running(job_id):
+                stopping = True
+            else:
+                stopping = False
+                await orchestrator.mark_stopped(db, job_id, "operator (no active task)")
+        if stopping:
+            await orchestrator.stop(db, job_id)
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0, "status": 1, "stopped_step": 1, "steps_done": 1})
+    if job["status"] != "stopped":
+        # Finished naturally (or failed) before the stop could take effect.
+        raise HTTPException(status_code=409, detail=f"Job finished as {job['status']} before it could be stopped")
+    return {"job_id": job_id, "status": job["status"], "stopped_step": job.get("stopped_step"),
+            "steps_done": job["steps_done"]}
+
+
+@api.post("/jobs/{job_id}/restart", status_code=201)
+async def restart_job(job_id: str, body: JobOverrides | None = None):
+    job = await get_job_or_404(job_id)
+    if job["status"] not in FINISHED:
+        raise HTTPException(status_code=409, detail=f"Job is {job['status']}, only a finished job can be restarted")
+    arena_url, model = validate_overrides(body, job)
+    steps = parse_roadmap(job["roadmap_md"])
+    async with _job_start_lock:
+        if await any_job_running():
+            raise HTTPException(status_code=409, detail="A job is already running - wait for it to finish")
+        new_id = await insert_job(arena_url, model, job.get("project_context", ""), job["roadmap_md"], steps,
+                                  restarted_from=job_id)
+    return {"job_id": new_id}
+
+
+@api.post("/jobs/{job_id}/resume")
+async def resume_job(job_id: str, body: JobOverrides | None = None):
+    job = await get_job_or_404(job_id)
+    if job["status"] not in RESUMABLE:
+        raise HTTPException(status_code=409, detail=f"Job is {job['status']}, only an error or stopped job can be resumed")
+    arena_url, model = validate_overrides(body, job)
+    async with _job_start_lock:
+        if await any_job_running():
+            raise HTTPException(status_code=409, detail="A job is already running - wait for it to finish")
+        first = await db.steps.find_one({"job_id": job_id, "status": {"$ne": "done"}}, {"_id": 0, "index": 1},
+                                        sort=[("index", 1)])
+        if not first:
+            raise HTTPException(status_code=409, detail="All steps are already done - nothing to resume")
+        k = first["index"]
+        ts = now_iso()
+        await db.steps.update_many({"job_id": job_id, "index": {"$gte": k}}, {"$set": {
+            "status": "pending", "prompt": "", "response": "", "artifacts": [], "error": None,
+            "started_at": None, "finished_at": None,
+        }})
+        done = await db.steps.count_documents({"job_id": job_id, "status": "done"})
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "status": "running", "error": None, "failed_step": None, "stopped_step": None, "finished_at": None,
+            "arena_url": arena_url, "model": model, "steps_done": done, "updated_at": ts,
+        }})
+        changes = []
+        if arena_url != job["arena_url"]:
+            changes.append(f"arena_url {job['arena_url']} -> {arena_url}")
+        if model != job["model"]:
+            changes.append(f"model {job['model']} -> {model}")
+        await append_log(db, job_id, "info", f"Resumed from step {k}" + (f" ({'; '.join(changes)})" if changes else ""))
+        orchestrator.start(db, job_id)
+    return {"job_id": job_id, "status": "running", "resumed_from_step": k}
 
 
 @api.get("/jobs/{job_id}/download")

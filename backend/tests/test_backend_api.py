@@ -186,7 +186,8 @@ def test_happy_job_lifecycle():
     j = wait(jid)
     no_id(j)
     keys = {"job_id", "status", "error", "failed_step", "title", "created_at", "finished_at", "arena_url", "model",
-            "project_context", "roadmap_md", "step_total", "steps_done", "steps", "log"}
+            "project_context", "roadmap_md", "step_total", "steps_done", "steps", "log",
+            "stopped_step", "restarted_from"}  # added with job controls (stop/restart/resume)
     assert set(j) == keys, set(j) ^ keys
     assert j["status"] == "done" and j["error"] is None and j["failed_step"] is None
     assert j["step_total"] == 3 and j["steps_done"] == 3
@@ -271,7 +272,8 @@ def test_list_jobs():
     d = r.json()
     no_id(d)
     assert isinstance(d, list) and 1 <= len(d) <= 20
-    keys = {"job_id", "status", "created_at", "step_total", "steps_done", "title", "model", "failed_step"}
+    keys = {"job_id", "status", "created_at", "step_total", "steps_done", "title", "model", "failed_step",
+            "stopped_step"}  # stopped_step added with job controls
     for j in d:
         assert set(j) == keys, set(j) ^ keys
         assert ISO_Z.match(j["created_at"])
