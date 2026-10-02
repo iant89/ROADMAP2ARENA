@@ -7,7 +7,7 @@ const LIVE = ['running', 'queued', 'paused']
 
 // Loads a job by id and polls GET /api/jobs/{id} every 1.5 s while it is running,
 // queued or paused (a queued job starts on its own when its turn comes).
-// Transient errors keep the last known state and retry on the next tick.
+// Transient errors keep the last known state and retry on the next tick; a 404 stops polling quietly.
 // Finish/fail toasts are global (App, from the queue poll), not per view.
 export function useJob(jobId) {
   const [job, setJob] = useState(null)
@@ -27,11 +27,12 @@ export function useJob(jobId) {
       return next
     } catch (err) {
       setError(err.message)
+      // A 404 is a definite answer (unknown or deleted job): shown inline by the view, no retry, no toast.
+      if (err.status === 404) return { status: 'missing' }
       if (!errorToastShown.current) {
         errorToastShown.current = true
         toast.error('Lost contact with the backend', { description: `${err.message} - retrying automatically` })
       }
-      if (err.status === 404) return { status: 'missing' }
       return { status: lastStatus.current[jobId] || 'running' }
     }
   }, [jobId])

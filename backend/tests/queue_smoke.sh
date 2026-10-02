@@ -3,7 +3,7 @@
 # Usage: backend/tests/queue_smoke.sh   (env B=http://127.0.0.1:8001/api). Needs jq.
 # Creates ~7 jobs (titles q_A..q_F), deletes them from Mongo at the end (needs mongosh)
 # and resets settings to the .env values.
-B=${B:-http://127.0.0.1:8001/api}; ST=http://127.0.0.1:9090
+B=${B:-http://127.0.0.1:8001/api}; ST=${ST:-http://127.0.0.1:9090}
 PASS=0; FAIL=0; IDS=()
 ok(){ if [ "$1" = "$2" ]; then PASS=$((PASS+1)); echo "PASS $3"; else FAIL=$((FAIL+1)); echo "FAIL $3: expected [$2] got [$1]"; fi; }
 rm_(){ printf '# q_%s\n\n### Step 1\nDo 1.\n\n### Step 2\nDo 2.\n' "$1"; }

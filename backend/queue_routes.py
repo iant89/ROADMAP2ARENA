@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Response
 from pydantic import BaseModel
 
 import app_settings
@@ -84,12 +84,26 @@ async def unpause(job_id: str):
         return {"job_id": job_id, **await queue_state(job_id)}
 
 
-@router.delete("/queue/{job_id}")
-async def remove(job_id: str):
+async def _cancel(job_id: str) -> dict:
     async with scheduler.lock:
         await queued_job_or_error(job_id)
         await scheduler.cancel_locked(db, job_id)
         return {"job_id": job_id, **await queue_state(job_id)}
+
+
+@router.post("/queue/{job_id}/cancel")
+async def cancel(job_id: str):
+    """Take a queued/paused job out of the queue. It is KEPT in history with status "cancelled"
+    (resumable/restartable). To remove a job for good use DELETE /api/jobs/{id}."""
+    return await _cancel(job_id)
+
+
+@router.delete("/queue/{job_id}", deprecated=True)
+async def remove(job_id: str, response: Response):
+    """Deprecated alias of POST /api/queue/{id}/cancel (same behaviour: cancels, does NOT delete)."""
+    response.headers["Deprecation"] = "true"
+    response.headers["Link"] = f'</api/queue/{job_id}/cancel>; rel="successor-version"'
+    return await _cancel(job_id)
 
 
 # ------------------------------------------------------------------ settings

@@ -169,6 +169,7 @@ export async function listJobs({ status, limit } = {}) {
     step_total: j.step_total,
     failed_step: j.failed_step,
     stopped_step: j.stopped_step ?? null,
+    queue_position: j.queue_position ?? null,
   }))
 }
 
@@ -219,8 +220,32 @@ export async function unpauseQueued(id) {
   return request(`/queue/${encodeURIComponent(id)}/unpause`, { method: 'POST' })
 }
 
-export async function removeQueued(id) {
-  return request(`/queue/${encodeURIComponent(id)}`, { method: 'DELETE' })
+// Takes a queued/paused job out of the queue; it stays in history as "cancelled".
+// (Not a delete - see deleteJob.)
+export async function cancelQueued(id) {
+  return request(`/queue/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
+}
+
+// ---------------------------------------------------------------- deletion (permanent)
+// Deletes a job with its steps and files. 409 if it is running (stop it first).
+export async function deleteJob(id) {
+  const res = await request(`/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  forgetSteps(id)
+  return res
+}
+
+// Resolves to { deleted: [ids], deleted_count, skipped: [{ job_id, reason: 'running'|'not_found' }] }.
+export async function bulkDeleteJobs(ids) {
+  const res = await request('/jobs/bulk-delete', { method: 'POST', body: { job_ids: ids } })
+  res.deleted.forEach(forgetSteps)
+  return res
+}
+
+// Deletes every done, failed, stopped and cancelled job. Same result shape as bulkDeleteJobs.
+export async function deleteFinishedJobs() {
+  const res = await request('/jobs/delete-finished', { method: 'POST' })
+  res.deleted.forEach(forgetSteps)
+  return res
 }
 
 // ---------------------------------------------------------------- settings
@@ -288,4 +313,134 @@ export async function downloadFile(jobId, path, step) {
 // { source_job_id, title, arena_url, model, project_context, roadmap_md, step_total }
 export async function getCloneSource(jobId) {
   return request(`/jobs/${encodeURIComponent(jobId)}/clone-source`)
+}
+
+// ---------------------------------------------------------------- notifications
+// { items: [{ id, event, job_id, title, status, step, message, url, created_at, read, deliveries }], unread_count, total }
+export async function getNotifications({ limit = 50, unread = false } = {}) {
+  const qs = new URLSearchParams({ limit: String(limit) })
+  if (unread) qs.set('unread', 'true')
+  return request(`/notifications?${qs}`)
+}
+
+export async function markNotificationRead(id) {
+  return request(`/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' })
+}
+
+export async function markAllNotificationsRead() {
+  return request('/notifications/read-all', { method: 'POST' })
+}
+
+export async function deleteNotification(id) {
+  return request(`/notifications/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export async function clearNotifications() {
+  return request('/notifications', { method: 'DELETE' })
+}
+
+// Settings never contain the SMTP password (email.password_set / password_masked instead).
+export async function getNotificationSettings() {
+  return request('/notifications/settings')
+}
+
+// Partial update; email.password: omit = keep, '' = clear, string = set.
+export async function saveNotificationSettings(patch) {
+  return request('/notifications/settings', { method: 'PUT', body: patch })
+}
+
+// Test sends use the saved settings plus optional unsaved overrides. Resolve to { ok, error, ... }.
+export async function testWebhook(overrides) {
+  return request('/notifications/test/webhook', { method: 'POST', body: overrides })
+}
+
+export async function testEmail(overrides) {
+  return request('/notifications/test/email', { method: 'POST', body: overrides })
+}
+
+// ---------------------------------------------------------------- git history (per job)
+// { exists, can_init, repo_id, owner, default_branch, head, commit_count, uncommitted_steps,
+//   commits: [{ sha, short_sha, message, step_index, author_name, date, files_changed, insertions, deletions }], remotes }
+export async function getJobGit(jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/git`)
+}
+
+// Creates the repo now and commits the done steps (for jobs from before git history).
+export async function initJobGit(jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/git/init`, { method: 'POST' })
+}
+
+// { sha, short_sha, subject, message, parents, files: [{ path, status, additions, deletions }], patch, patch_truncated }
+export async function getJobCommit(jobId, sha) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/git/commits/${encodeURIComponent(sha)}`)
+}
+
+// Structured diff base..head for the DiffViewer (base omitted = head's parent). Step outputs are
+// compared by passing two steps' commit SHAs.
+export async function compareJobCommits(jobId, head, base) {
+  const q = new URLSearchParams({ head, ...(base ? { base } : {}) })
+  return request(`/jobs/${encodeURIComponent(jobId)}/git/compare?${q}`)
+}
+
+// format: 'zip' (working tree + .git) or 'bundle' (git bundle, clone with `git clone file.bundle`)
+export async function downloadJobRepo(jobId, format = 'zip') {
+  const res = await request(`/jobs/${encodeURIComponent(jobId)}/git/download?format=${format}`, { raw: true })
+  return saveResponse(res, `roadmap2arena-${jobId.slice(0, 8)}.${format === 'bundle' ? 'bundle' : 'zip'}`)
+}
+
+// ---------------------------------------------------------------- GitHub
+// { connected, username, name, avatar_url, html_url, scopes, token_type, connected_at, auto_push: { enabled, private } }
+// The token is never returned.
+export async function getGitHub() {
+  return request('/github')
+}
+
+export async function connectGitHub(token) {
+  return request('/github/token', { method: 'PUT', body: { token } })
+}
+
+export async function disconnectGitHub() {
+  return request('/github', { method: 'DELETE' })
+}
+
+export async function saveGitHubSettings(patch) {
+  return request('/github/settings', { method: 'PUT', body: patch })
+}
+
+// { items: [{ full_name, name, owner, private, default_branch, html_url, can_push }], total, truncated }
+export async function listGitHubRepos(q = '') {
+  return request(`/github/repos${q ? `?q=${encodeURIComponent(q)}` : ''}`)
+}
+
+// { connected, username, defaults: { repo_name, branch, pr_title, pr_body }, last_push }
+export async function getJobGitHub(jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/github`)
+}
+
+// body: { mode: 'new'|'existing', repo_name, private, repo_full_name, branch, open_pr, pr_base, pr_title, pr_body }
+export async function pushJobToGitHub(jobId, body) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/github/push`, { method: 'POST', body })
+}
+
+// OAuth device flow: start -> { user_code, verification_uri, expires_at, interval };
+// poll every `interval` s -> { status: pending|slow_down|connected|expired|denied, interval, github }
+export async function startGitHubOAuth() {
+  return request('/github/oauth/start', { method: 'POST' })
+}
+
+export async function pollGitHubOAuth() {
+  return request('/github/oauth/poll', { method: 'POST' })
+}
+
+export async function cancelGitHubOAuth() {
+  return request('/github/oauth/cancel', { method: 'POST' })
+}
+
+// Watches created by pushes; the backend polls them every poll_seconds and emits github_* notifications.
+export async function getGitHubWatches() {
+  return request('/github/watches')
+}
+
+export async function pollGitHubNow() {
+  return request('/github/poll', { method: 'POST' })
 }

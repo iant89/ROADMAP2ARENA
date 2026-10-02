@@ -18,20 +18,50 @@ FastAPI's `{"detail": "..."}` shape.
 | GET | `/api/jobs?status=a,b&limit=n` | most recent first, default 20, `limit` 1-200: `[{job_id,status,created_at,step_total,steps_done,title,model,failed_step,stopped_step,restarted_from,queue_position,queued_at,started_at,finished_at,paused}]` | 422 unknown status / limit out of range |
 | GET | `/api/jobs/{id}` | `{job_id,status,error,failed_step,stopped_step,restarted_from,queue_position,queued_at,started_at,title,created_at,finished_at,arena_url,model,project_context,roadmap_md,step_total,steps_done,steps:[{index,title,description,status,error,artifact_paths}],log:[{ts,level,msg}]}` | 404 |
 | GET | `/api/jobs/{id}/steps/{index}` | full step: `{job_id,index,title,description,status,prompt,response,error,artifacts:[{path,content}],started_at,finished_at}` | 404 job or step |
-| POST | `/api/jobs/{id}/stop` | `{job_id,status:"stopped",stopped_step,steps_done}` | 404; 409 job not running (queued/paused: remove it from the queue instead) or finished before the stop took effect |
+| POST | `/api/jobs/{id}/stop` | `{job_id,status:"stopped",stopped_step,steps_done}` | 404; 409 job not running (queued/paused: cancel it via the queue instead) or finished before the stop took effect |
 | POST | `/api/jobs/{id}/restart` body `{arena_url?, model?}` (optional) | 201 `{job_id, status, queue_position}` of a NEW job (enqueued) | 404; 409 job not finished, or a restart of this job is already queued/paused/running; 422 bad override |
 | POST | `/api/jobs/{id}/resume` body `{arena_url?, model?}` (optional) | `{job_id, status:"running"\|"queued", queue_position, resumed_from_step}` (same job, enqueued) | 404; 409 job done/running/queued/paused or nothing left; 422 bad override |
 | GET | `/api/queue` | `{running: summary\|null, queued:[summary in queue order], count, waiting}`; summary = `{job_id,status,title,model,step_total,steps_done,queue_position,queued_at,created_at,started_at,restarted_from,paused}` | - |
 | POST | `/api/queue/{id}/move` body `{direction:"up"\|"down"}` or `{position:n}` | `{job_id,status,queue_position}` | 404; 409 not queued/paused; 422 neither/both fields, bad direction, position < 1 (large positions clamp to the end) |
 | POST | `/api/queue/{id}/pause` | `{job_id,status:"paused",queue_position}` - moved to the END of the queue (idempotent) | 404; 409 not queued/paused |
 | POST | `/api/queue/{id}/unpause` | `{job_id,status,queue_position}` - eligible again, keeps its position; may start at once | 404; 409 not queued/paused |
-| DELETE | `/api/queue/{id}` | `{job_id,status:"cancelled",queue_position:null}` - kept in history | 404; 409 not queued/paused |
+| POST | `/api/queue/{id}/cancel` | `{job_id,status:"cancelled",queue_position:null}` - CANCEL: out of the queue, KEPT in history (resumable/restartable) | 404; 409 not queued/paused (running: use stop) |
+| DELETE | `/api/queue/{id}` | **Deprecated alias of POST `/api/queue/{id}/cancel`** (same behaviour, does NOT delete). Response headers `Deprecation: true`, `Link: </api/queue/{id}/cancel>; rel="successor-version"` | same as cancel |
+| DELETE | `/api/jobs/{id}` | HARD DELETE: job document, all its steps (prompts, responses, artifacts) and registered per-job data. `{deleted:true, job_id, previous_status, steps_deleted, was_queued}`; a queued/paused job is taken out of the queue (positions renumbered) | 404; 409 running ("stop it first, then delete it") |
+| POST | `/api/jobs/bulk-delete` body `{job_ids:[...]}` (1-500, duplicates/blank ignored) | 200 `{deleted:[ids in request order], deleted_count, skipped:[{job_id, reason:"running"\|"not_found"}]}` | 422 missing/empty/over 500 ids |
+| POST | `/api/jobs/delete-finished` | deletes every `done\|error\|stopped\|cancelled` job; same shape as bulk-delete | - |
 | GET | `/api/jobs/{id}/transcript` | `{job_id,title,status,model,arena_url,project_context,created_at,finished_at,step_total,steps_done,turns:[{step_index,step_title,status,prompt,response,error,artifact_paths,started_at,finished_at}]}` - one user (prompt) / assistant (response) turn per sent step, pending steps omitted | 404 |
 | GET | `/api/jobs/{id}/transcript.html` | `text/html; charset=utf-8` attachment `roadmap2arena-<id8>-transcript.html`: standalone (inline CSS, no scripts/external assets), all text HTML-escaped, fenced blocks as `<pre>` | 404 |
 | GET | `/api/jobs/{id}/files` | `[{path,step_index,versions:[step...],size,zip_path,zip_skip_reason}]` latest version per path (done steps), sorted by path | 404 |
 | GET | `/api/jobs/{id}/files/download?path=<p>&step=<n>` | `text/plain; charset=utf-8` attachment (file name = basename); latest version, or the version from step n | 404 job/file/version; 422 missing path, step outside 1..100000 |
 | GET | `/api/jobs/{id}/clone-source` | `{source_job_id,title,arena_url,model,project_context,roadmap_md,step_total}` for the prefilled Clone form | 404 |
 | GET | `/api/jobs/{id}/download` | `application/zip`, latest version per path | 404 unknown job; 409 no artifacts |
+| GET | `/api/jobs/{id}/git?limit=1..500` | `{job_id, project_id, job_status, exists, can_init, repo_id, owner:{type,id}, path, default_branch, head, commit_count, uncommitted_steps, commits:[{sha, short_sha, message, step_index, author_name, author_email, date, files_changed, insertions, deletions}], remotes}` newest first; `exists:false` (no repo yet) has `commits:[]` | 404 job, 422 limit |
+| POST | `/api/jobs/{id}/git/init` | create the repo now and commit every done step without a commit (older jobs); same shape + `committed_steps:[N]`; idempotent | 404, 500 git error |
+| GET | `/api/jobs/{id}/git/commits/{sha}` (4-40 hex) | `{sha, short_sha, subject, message, parents, step_index, author_name, author_email, date, files:[{path, status added/modified/deleted/renamed, old_path, additions, deletions}], patch (max 400k chars), patch_truncated, diff}` - `diff` = structured diff (see below) | 422 bad sha, 404 job/repo/commit |
+| GET | `/api/jobs/{id}/git/compare?head=<sha>&base=<sha>` (base optional = parent of head; 4-40 hex) | structured diff object (below) for comparing two steps | 422 bad sha, 404 job/repo/commit |
+| GET | `/api/jobs/{id}/git/download?format=zip\|bundle` | zip = working tree + `.git` in `roadmap2arena-<id8>/` (`roadmap2arena-<id8>-repo.zip`); bundle = `git bundle --all` (`roadmap2arena-<id8>.bundle`, `git clone file.bundle`) | 404 job/no repo, 409 no commits, 422 format |
+| GET | `/api/github` | `{connected, auth_method: pat\|oauth\|env\|null, source: settings\|env\|null, encryption: ok\|missing\|invalid, env_token, token_error, username, name, avatar_url, html_url, scopes, token_type, connected_at, auto_push:{enabled, private}, oauth:{available, client_id, client_id_source: env\|settings\|null, pending:{user_code, verification_uri, expires_at, interval}\|null}}` - never the token | - |
+| PUT | `/api/github/token` `{token}` | validates with GitHub `GET /user` (scopes from X-OAuth-Scopes), stores it Fernet-encrypted; same shape as GET | 422 malformed, 401 rejected by GitHub, 409 no/invalid `R2A_SECRET_KEY` / OAuth connected / device flow pending / `R2A_GITHUB_TOKEN` set, 502 unreachable, 504 timeout |
+| DELETE | `/api/github` | disconnect (token removed; auto_push and client id kept) | 409 when `R2A_GITHUB_TOKEN` is set |
+| PUT | `/api/github/settings` `{auto_push?:{enabled?, private?}, oauth_client_id?}` | same shape as GET; `oauth_client_id:""` clears (falls back to `GITHUB_OAUTH_CLIENT_ID`) | 422 |
+| POST | `/api/github/oauth/start` | device flow (scope `repo`): `{user_code, verification_uri, expires_at, interval}` (device_code stays server-side) | 409 connected / not configured / no `R2A_SECRET_KEY` / `R2A_GITHUB_TOKEN` set, 422 GitHub refused (unknown client id, device flow disabled), 502 |
+| POST | `/api/github/oauth/poll` | `{status: pending\|slow_down\|connected\|expired\|denied, interval, github}`; calls GitHub at most once per interval; polling again after the OAuth flow completed returns 200 `connected` (idempotent) | 409 nothing pending, 409 connected with a personal access token (settings or R2A_GITHUB_TOKEN), 422 other OAuth error |
+| POST | `/api/github/oauth/cancel` | clears the pending flow; GET shape | - |
+| GET | `/api/github/repos?q=` | `{items:[{full_name, name, owner, private, default_branch, html_url, description, can_push, updated_at}], total, truncated}` (up to 300, most recently updated) | 409 not connected (or stored token undecryptable), GitHub errors per the mapping below |
+| GET | `/api/jobs/{id}/github` | `{job_id, connected, username, defaults:{repo_name, branch: r2a/job-<id8>, pr_title, pr_body}, last_push, watches}` | 404 |
+| POST | `/api/jobs/{id}/github/push` | body `{mode: new\|existing, repo_name, private (default true), description, repo_full_name, branch, open_pr, pr_base, pr_title, pr_body}` -> `{pushed, source, pushed_at, branch, head, commit_count, repo:{full_name, html_url, private, created}, branch_url, commit_url, pr:{number, html_url, existing, base, state}\|null, pr_error}`; emits `github_pushed` (+ `github_pr_opened` for a new PR) and upserts a watch | 404, 409 not connected / running / no commits / repo name exists / non-fast-forward branch / protected or rules, 422 validation (incl. open_pr with mode new; branch/pr_base must be valid as `refs/heads/<name>` (git check-ref-format --normalize, already normalised), no `@{` / bare `@` / `HEAD`, max 200 chars, no leading `-` or whitespace), 401 bad token, 403 no permission / workflow scope, 404 repo, 429 rate limit (Retry-After), 502, 504 push timeout |
+| GET | `/api/github/watches` | `{items:[{job_id, full_name, branch, html_url, head_sha, pr_number, state:{pr_state, ci: none\|pending\|success\|failure, ...}, active, pushed_at, expires_at, last_error, last_polled_at}], poll_seconds, paused_for, pause_reason}` (no etags) | - |
+| POST | `/api/github/poll` | poll the active watches now: `{watches, notifications}` or `{skipped: not_connected\|rate_limited\|rate_low\|auth, resume_in?}` | - |
+| GET | `/api/notifications?limit=1..200&unread=bool` | `{items:[{id,event,job_id,title,status,step,message,url,created_at,read,deliveries}], unread_count, total}` newest first (default limit 50) | 422 bad limit/unread |
+| POST | `/api/notifications/{id}/read` | `{id, read:true, unread_count}` | 404 |
+| POST | `/api/notifications/read-all` | `{updated, unread_count:0}` | - |
+| DELETE | `/api/notifications/{id}` | `{id, deleted:true}` | 404 |
+| DELETE | `/api/notifications` | clear all: `{deleted, unread_count:0}` | - |
+| GET | `/api/notifications/settings` | `{app_url, in_app:{events}, webhook:{enabled,url,events}, email:{enabled,host,port,security,username,from_addr,to_addrs,events,password_set,password_masked}, updated_at}` - the SMTP password is NEVER returned | - |
+| PUT | `/api/notifications/settings` partial deep merge | same shape as GET | 422 unknown key, app_url/webhook.url not http(s), webhook enabled without url, port not int 1-65535, security not starttls/ssl/none, invalid from/to address, email enabled without host/from/to, events with unknown keys/non-bool, bad host |
+| POST | `/api/notifications/test/webhook` body `{url?}` (optional, not saved) | `{ok, status_code, error, url}` - sends an `event:"test"` payload even if the webhook is disabled | 422 no url / bad url |
+| POST | `/api/notifications/test/email` body = optional unsaved email fields (password omitted/masked = saved one) | `{ok, error, to_addrs}` | 422 invalid fields |
 
 Statuses: job `queued|paused|running|done|error|stopped|cancelled`; step `pending|running|done|error|stopped`.
 Finished (history) = `done|error|stopped|cancelled`; resumable = `error|stopped|cancelled`.
@@ -85,6 +115,148 @@ UI labels: done = "Completed", error = "Failed", queued = "Queued" (not started 
 - Startup recovery still turns running jobs into error "interrupted by server
   restart"; such jobs are resumable.
 Log levels: `info|ok|warn|error`; the job keeps the last 500 entries.
+
+### Git history (backend/git_cli.py, repos.py, git_integration.py)
+
+- Every job has its own local repo at `<R2A_DATA_DIR>/repos/<job_id>` (default data dir
+  `<repo root>/data`, gitignored - deliberately OUTSIDE `backend/` so uvicorn --reload never sees
+  job files, F-006), branch `main`, created when the job's first run starts. On startup repos
+  left in the old `backend/data/repos` are moved there (only when the new path does not exist;
+  `R2A_MIGRATE_LEGACY_DATA=0` disables it, test servers do). Dev reload watches only `backend/`
+  minus tests/, data/ and git files: `deploy/supervisor/backend.conf`, `run.sh` (needs watchfiles).
+- After each completed step the step's artifacts are written into the working tree (files
+  accumulate across steps, latest version wins, same as the ZIP) and committed as
+  `Step N: <title>` with author and committer `ROADMAP2ARENA <roadmap2arena@localhost>`. The body
+  holds trailers `R2A-Job: <id>` and `R2A-Step: N`. A step without named files gives an empty commit.
+  The sha is stored on the step (`commit_sha`, also in GET /api/jobs/{id} steps).
+- Paths are normalised like the ZIP (leading `/` and `./` dropped); paths with `..` or a `.git`
+  segment, paths through symlinks and file/directory clashes are skipped and logged
+  (`Git: skipped "<path>" - <reason>`).
+- Resume continues the same repo (done steps keep their commits). Restart and clone are new jobs
+  and get a new repo. Every run first commits done steps that have no commit yet (sync).
+  Deleting a job deletes its repo (directory + `repos` document).
+- Git failures are logged (`Git: commit failed - ...`, warn) and never fail the job.
+- git runs via subprocess with argument lists (no shell), no system/global config, hooks off,
+  no prompts, `protocol.ext` disabled.
+- Data model (ready for projects): `repos` collection
+  `{id, owner:{type:"job"|"project", id}, kind:"local", path, default_branch, head, commit_count,
+  remotes:[...], created_at, updated_at}`; jobs carry `repo_id` and `project_id` (null = standalone).
+  `repos.snapshot(repo, ref="HEAD", include, exclude, budget_bytes, max_file_bytes)` returns the
+  tree and text file contents at a ref within a byte budget (for future project context).
+- Structured diff (`backend/git_diff.py`, `diff_sync(root, base, head)`): `{base, head, files:[{path,
+  old_path, status, additions, deletions, binary, patch, patch_too_large, old_content, new_content,
+  context_expandable}], truncated, stats:{files, additions, deletions}}`; old/new content lets the UI
+  expand hidden context. Caps: 300 files, 200k chars per patch / 2M total, 256 kB per content / 3 MB total.
+- UI: History detail > Git tab: commit list, commit detail rendered with the DiffViewer,
+  "Compare steps" (From/To selects -> /git/compare), Download repo (zip incl. .git) and Bundle;
+  "Create repository" for jobs without a repo.
+- DiffViewer (`frontend/src/components/r2a/DiffViewer.jsx`, lazy chunk, `@git-diff-view/react`, MIT):
+  split/unified toggle (localStorage `r2a.diffMode`, unified by default below 640px), wrap toggle,
+  file list with octicon status icons and +/- counts, collapsible file sections, expand/collapse all,
+  syntax highlighting (lowlight), word-level change highlighting, expandable context lines,
+  error boundary falling back to the raw patch.
+- Icon pass: every action button has a lucide/octicon icon; icon-only buttons carry aria-label.
+
+### GitHub (backend/github_client.py, github_integration.py)
+
+- Connect with a personal access token OR OAuth (device flow; `GITHUB_OAUTH_CLIENT_ID` in .env or a
+  client ID saved in Settings). Mutually exclusive: connecting one while the other is active is 409
+  (replacing a PAT with another PAT is allowed); a PAT is also refused while a device code is pending.
+- The token (PAT or OAuth alike) is stored Fernet-encrypted (`token_enc`) in Mongo (`integrations`,
+  `_id: "github"`) with `R2A_SECRET_KEY` from backend/.env; saving without a valid key is a 409 with
+  the key-generation hint. A changed key makes the stored token unreadable (`token_error`, reconnect).
+  A plaintext token from a pre-release build is encrypted on first read. `R2A_GITHUB_TOKEN` in
+  .env overrides everything (`auth_method: env`; connect/disconnect from the UI are 409).
+- The token is never returned, logged, put in argv, the remote URL or .git/config: `git push` gets it
+  as `http.<https://host/>.extraHeader` (`Authorization: Basic base64(login:token)`, an empty value
+  first resets inherited headers, `credential.helper` cleared) through `GIT_CONFIG_COUNT/KEY_n/VALUE_n`
+  env vars of that one process. All git output is passed through `redact()` (the token and its
+  base64 form, `github_pat_*`, `gh[pousr]_*`, Authorization values, URL credentials). Push timeout
+  300 s. Only https clone URLs on github.com (or the configured API host) are pushed to
+  (`R2A_GITHUB_ALLOW_FILE_REMOTES=1` allows local paths, for tests only).
+- REST: raw httpx, `X-GitHub-Api-Version: 2026-03-10`, timeouts 20 s read / 10 s connect, serial
+  requests. GETs retry once on 5xx/network errors; POSTs never retry. Mapping: 401 -> 401; 403 ->
+  403 with `X-Accepted-GitHub-Permissions` or accepted/actual OAuth scopes; 403/429 rate limit ->
+  429 + `Retry-After`; 404 -> 404 "not found or no access"; 409/422/451 pass through; timeout -> 504;
+  network/5xx/other -> 502. git push failures: non-fast-forward 409, workflow permission 403, auth
+  401, repository not found 404, permission denied 403, GH013/protected/rules 409, timeout 504.
+- Watcher (polling, no public URL/webhook): each push upserts `github_watches` `{job_id, full_name,
+  branch, head_sha, pr_number, etags, state, active, pushed_at, expires_at (+7 days), last_error}`.
+  An in-process loop (started in lifespan; keep uvicorn `--workers 1`) runs every
+  `R2A_GITHUB_POLL_SECONDS` (default 60, min 30), right after a push and on `POST /api/github/poll`.
+  ETag conditional GETs on the branch, the PR (`merged`, never `merge_commit_sha`), the combined status
+  and check-runs (on 403/404 falls back to `actions/runs?head_sha=`). Emits `github_pushed` (new
+  commits from outside), `github_pr_merged`, `github_pr_closed`, `github_checks_passed`,
+  `github_checks_failed`. A watch ends after 7 days or once the PR is closed/merged and CI is final
+  ("no CI" counts as final 15 min after the push). Rate limit/auth errors pause polling
+  (Retry-After / reset / 60 s; 10 min for auth; also when fewer than 50 calls remain); reconnecting
+  lifts the pause. Deleting a job deletes its watches (never anything on GitHub).
+- Push: syncs the job repo first, then `git push HEAD:refs/heads/<branch>` - never `--force`; a
+  diverged branch is a 409 asking for another branch name. New repos are created with
+  `auto_init:false`; a PR needs an existing repo (base = `pr_base` or the repo's default branch).
+  PR problems after a successful push come back as `pr_error` (unrelated history, missing base,
+  nothing to compare); an already-open PR for the branch is returned with `existing: true`.
+- Each push is stored on the job (`github`, = last_push) and in the repo document's `remotes`
+  (one entry per repo+branch, with `pushed_head`), and logged (`GitHub: pushed N commits to ...`).
+- Auto-push (Settings): when a job finishes as done, push to its last pushed repo/branch, else a new
+  repo `<slug>-<id6>` (private per setting). Failures are logged (`GitHub: auto-push failed - ...`).
+- Tests use `GITHUB_API_URL` / `GITHUB_OAUTH_URL` pointing at backend/tests/github_stub.py.
+- UI: Settings > GitHub (OAuth card with code + verification link, PAT card, each disabled with a
+  note while the other is connected; missing-key banner with the generate command; .env-token note;
+  "encrypted at rest"; Disconnect; auto-push; watched branches with CI/PR state and "Check now"). History detail: "Push to GitHub" sheet
+  (new/existing repo with search, branch, optional PR with prefilled title/body, result links);
+  the Git tab lists pushed remotes. Octicons for GitHub/git actions; the GitHub mark
+  (`MarkGithubIcon`) is used unaltered in `currentColor`, always next to the word "GitHub", only on
+  GitHub controls (GitHub logo guidelines) - never as the app logo.
+
+### Notifications (backend/notifier.py, notify_settings.py, notification_routes.py)
+
+- Events: `job_done`, `job_failed`, `job_stopped` (orchestrator `on_job_finished` hook, fired once
+  when a run ends done/error/stopped) and `queue_empty` (right after a job ends, when no job is
+  queued or running; paused jobs don't count and are mentioned: "(1 paused job left)").
+  Server-restart interruptions and cancels do not notify. GitHub events (`github_pushed`,
+  `github_pr_opened`, `github_pr_merged`, `github_pr_closed`, `github_checks_passed`,
+  `github_checks_failed`) come from pushes and the watcher, with a prebuilt message and `link`
+  (the GitHub branch/PR/commit URL; `url` stays the in-app job link).
+- Channels with per-event toggles: `in_app` (stored in Mongo `notifications`, last 500 kept ->
+  bell, toasts and browser notifications), `webhook`, `email`. Defaults: in-app all on; webhook
+  off (all events on); email off (done + failed on; GitHub events off).
+- Webhook: `POST <url>` JSON `{event, job_id, title, status, step, message, url, link, timestamp, app,
+  text, content}`; `text` (Slack) = `content` (Discord, max 1900 chars) = emoji + message + link.
+  `step` = step_total (done), failed_step (failed), stopped_step (stopped), null (queue empty).
+  `url` = `<app_url>/?tab=history&job=<id>` (queue empty: `?tab=queue`). 10 s timeout, 2xx = ok.
+- Email: SMTP via smtplib in a worker thread (15 s timeout), security `starttls` (requires the
+  server's STARTTLS), `ssl` or `none`; login only if a username is set. Subject
+  `[ROADMAP2ARENA] Job finished: <title>`, plain-text body with the link.
+- Delivery results are written to the job log (`Notification: webhook delivered (HTTP 200)` /
+  `Notification: email failed - ...`, level warn) and to the notification's `deliveries`. Failures
+  never change the job or the queue.
+- The SMTP password is stored server-side and is write-only: GET returns `password_set` and
+  `password_masked` (`********`); PUT `password` omitted or `********` = keep, `""` = clear.
+- Notifications of a deleted job are kept (their link then shows "Could not load job").
+- UI: bell in the header (unread badge, panel with mark read / mark all read / remove / Clear
+  (two-click)); clicking an item marks it read and opens the job (or the queue). New
+  notifications appear as toasts (they replace the old queue-poll "Job finished"/"failed"
+  toasts). Browser notifications: Settings toggle, per browser (localStorage
+  `r2a.browserNotifications`), shown only while the tab is hidden/unfocused and permission is
+  granted. Settings > Notifications: event x channel matrix, webhook URL + Send test, SMTP
+  fields + Send test, app URL.
+
+### Cancel vs delete
+
+- **Cancel** (`POST /api/queue/{id}/cancel`, UI: Job queue "Cancel job") only applies to
+  queued/paused jobs: status becomes `cancelled`, the job stays in history and can be
+  resumed or restarted. `DELETE /api/queue/{id}` is kept as a deprecated alias.
+- **Delete** (`DELETE /api/jobs/{id}`, bulk, delete-finished; UI: History detail "Delete",
+  History list "Select" mode with "Delete selected" and "Delete all finished") removes the
+  job for good. Running jobs are refused (409 / skipped "running"); queued/paused jobs are
+  removed from the queue. Deletion runs under the scheduler lock, so a queued job cannot start
+  while being deleted. Jobs that link to a deleted job (`restarted_from`/`cloned_from`) keep
+  the id; opening it shows "Could not load job ... not found" (no retry toast).
+- UI deletes use a two-click confirm (first click arms the button for 4 s: "Delete
+  permanently?" / "Delete N jobs?"; blur, Escape or timeout disarms).
+- Extension point: `deletion_routes.on_delete` callbacks `(db, job_id)` run after a delete
+  (failures are logged, never block the delete).
 
 ZIP rules: backslash -> `/`, strip leading `/` and `./`, skip paths with a `..`
 segment or an empty file name (each skip is written to the job log), unnamed

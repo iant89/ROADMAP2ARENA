@@ -9,3 +9,6 @@ dist/
 .DS_Store
 .pytest_cache/
 *.db
+backend/data/
+# job repos and other runtime data (R2A_DATA_DIR default)
+/data/

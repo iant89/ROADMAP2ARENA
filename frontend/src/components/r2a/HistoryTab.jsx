@@ -8,11 +8,18 @@ import CloneJobSheet from './CloneJobSheet'
 // Job history tab: collapsible job list on the left, the opened job (?job=<id>) on the right.
 export default function HistoryTab({ jobId, onOpen, onOpenJob, onOpenQueue, onQueueChanged, refreshKey, isDesktop, queue, settings, onCloned }) {
   const [cloneId, setCloneId] = useState(null)
+  const [deletedKey, setDeletedKey] = useState(0)
+  // After a delete: close the detail if its job is gone, refresh the list and the queue.
+  const handleDeleted = (ids) => {
+    if (jobId && ids.includes(jobId)) onOpen(null)
+    setDeletedKey((k) => k + 1)
+    onQueueChanged?.()
+  }
   return (
     <div className={isDesktop ? 'flex h-full min-h-0' : 'flex flex-col'} data-testid="history-tab">
       {/* Mobile uses a list/detail pattern: with a job open, the list gives way to a back bar. */}
       {isDesktop || !jobId ? (
-        <HistoryPanel selectedId={jobId} onSelect={onOpen} refreshKey={refreshKey} isDesktop={isDesktop} />
+        <HistoryPanel selectedId={jobId} onSelect={onOpen} refreshKey={`${refreshKey}-${deletedKey}`} isDesktop={isDesktop} onDeleted={handleDeleted} />
       ) : (
         <div className="border-b border-border bg-paper px-3 py-2">
           <Button variant="ghost" size="sm" onClick={() => onOpen(null)} data-testid="history-back-to-list">
@@ -22,7 +29,7 @@ export default function HistoryTab({ jobId, onOpen, onOpenJob, onOpenQueue, onQu
       )}
       <div className={isDesktop ? 'min-w-0 flex-1' : ''}>
         {jobId ? (
-          <HistoryDetail key={jobId} jobId={jobId} onOpenJob={onOpenJob} onOpenQueue={onOpenQueue} onQueueChanged={onQueueChanged} onClone={setCloneId} />
+          <HistoryDetail key={jobId} jobId={jobId} onOpenJob={onOpenJob} onOpenQueue={onOpenQueue} onQueueChanged={onQueueChanged} onClone={setCloneId} onDeleted={handleDeleted} />
         ) : isDesktop && (
           <div className="grid h-full min-h-[300px] place-items-center p-10 text-center" data-testid="history-no-selection">
             <div className="max-w-sm">

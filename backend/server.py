@@ -1,6 +1,8 @@
 """ROADMAP2ARENA backend: FastAPI app, all routes under /api."""
 from __future__ import annotations
 
+import asyncio
+
 import io
 import logging
 import uuid
@@ -10,7 +12,9 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from pymongo import ASCENDING, DESCENDING
 
@@ -21,7 +25,16 @@ import settings
 from artifact_extractor import clean_zip_path
 from database import db, mongo
 from orchestrator import append_log, now_iso
+from deletion_routes import router as deletion_router
 from history_routes import router as history_router
+from notification_routes import router as notification_router
+import notifier
+import deletion_routes
+import git_integration
+import repos
+from git_integration import router as git_router
+import github_integration
+from github_integration import router as github_router
 from queue_routes import queue_state, router as queue_router
 from roadmap_parser import parse_roadmap, roadmap_title
 
@@ -43,7 +56,25 @@ async def lifespan(_: FastAPI):
     await db.jobs.create_index([("created_at", DESCENDING)])
     await db.jobs.create_index([("status", ASCENDING), ("queue_position", ASCENDING)])
     await db.steps.create_index([("job_id", ASCENDING), ("index", ASCENDING)], unique=True)
+    await db.notifications.create_index([("id", ASCENDING)], unique=True)
+    await db.notifications.create_index([("created_at", DESCENDING)])
     await app_settings.seed(db, now_iso())
+    try:  # F-006: job repos moved out of backend/ (uvicorn --reload watch) to R2A_DATA_DIR
+        await asyncio.to_thread(repos.migrate_legacy_data)
+    except Exception:  # noqa: BLE001 - never block startup; repos that did not move are reported
+        logging.getLogger("roadmap2arena").exception("Data migration from backend/data failed")
+    await repos.ensure_indexes(db)
+    await github_integration.ensure_indexes(db)
+    if notifier.on_job_finished not in orchestrator.on_job_finished:
+        orchestrator.on_job_finished.append(notifier.on_job_finished)
+    if github_integration.on_job_finished not in orchestrator.on_job_finished:
+        orchestrator.on_job_finished.append(github_integration.on_job_finished)  # auto-push (if enabled)
+    for hooks, cb in ((orchestrator.on_run_start, git_integration.on_run_start),
+                      (orchestrator.on_step_done, git_integration.on_step_done),
+                      (deletion_routes.on_delete, git_integration.on_delete),
+                      (deletion_routes.on_delete, github_integration.on_delete)):
+        if cb not in hooks:
+            hooks.append(cb)
     stale = await db.jobs.find({"status": "running"}, {"_id": 0, "id": 1}).to_list(None)
     for job in stale:
         ts = now_iso()
@@ -60,12 +91,25 @@ async def lifespan(_: FastAPI):
     async with scheduler.lock:
         await scheduler.renumber(db)
     scheduler.start_worker(db)
+    github_integration.start_poller()  # in-process: keep uvicorn at --workers 1
     yield
+    await github_integration.stop_poller()
     await scheduler.stop_worker()
     mongo.close()
 
 
 app = FastAPI(title="ROADMAP2ARENA", lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(_request, exc: RequestValidationError):
+    """Return the standard 422 shape but never echo the submitted input back (B-004).
+
+    FastAPI's default handler includes each error's raw "input", which can contain
+    secrets such as the SMTP password sent to /api/notifications/settings.
+    """
+    errors = [{k: v for k, v in err.items() if k not in ("input", "ctx")} for err in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -141,6 +185,9 @@ async def insert_job(arena_url: str, model: str, project_context: str, roadmap_m
         "roadmap_md": roadmap_md, "title": roadmap_title(roadmap_md) or steps[0]["title"],
         "step_total": len(steps), "steps_done": 0, "error": None, "failed_step": None,
         "stopped_step": None, "restarted_from": restarted_from, "cloned_from": cloned_from, "log": [],
+        # project_id: owning project (planned "Projects" feature, None = standalone job);
+        # repo_id: the job's own git repo (repos collection), set when it is created.
+        "project_id": None, "repo_id": None,
     })
     await db.steps.insert_many([{
         "job_id": job_id, "index": s["index"], "title": s["title"], "description": s["description"],
@@ -198,7 +245,7 @@ async def create_job(body: JobCreate):
     return {"job_id": job_id, **state}
 
 
-LIST_FIELDS = ("status", "created_at", "step_total", "steps_done", "title", "model", "failed_step", "stopped_step",
+LIST_FIELDS = ("project_id", "status", "created_at", "step_total", "steps_done", "title", "model", "failed_step", "stopped_step",
                "restarted_from", "cloned_from", "queue_position", "queued_at", "started_at", "finished_at")
 
 
@@ -230,6 +277,8 @@ async def get_job(job_id: str):
         "stopped_step": job.get("stopped_step"),
         "restarted_from": job.get("restarted_from"),
         "cloned_from": job.get("cloned_from"),
+        "project_id": job.get("project_id"),
+        "repo_id": job.get("repo_id"),
         "queue_position": job.get("queue_position"),
         "queued_at": job.get("queued_at"),
         "started_at": job.get("started_at"),
@@ -246,6 +295,7 @@ async def get_job(job_id: str):
             "index": s["index"], "title": s["title"], "description": s.get("description", ""),
             "status": s["status"], "error": s.get("error"),
             "artifact_paths": [a["path"] for a in s.get("artifacts", [])],
+            "commit_sha": s.get("commit_sha"),
         } for s in steps],
         "log": job.get("log", []),
     }
@@ -325,7 +375,7 @@ async def resume_job(job_id: str, body: JobOverrides | None = None):
         k = first["index"]
         ts = now_iso()
         await db.steps.update_many({"job_id": job_id, "index": {"$gte": k}}, {"$set": {
-            "status": "pending", "prompt": "", "response": "", "artifacts": [], "error": None,
+            "status": "pending", "prompt": "", "response": "", "artifacts": [], "error": None, "commit_sha": None,
             "started_at": None, "finished_at": None,
         }})
         done = await db.steps.count_documents({"job_id": job_id, "status": "done"})
@@ -379,3 +429,7 @@ async def download(job_id: str):
 app.include_router(api)
 app.include_router(queue_router)
 app.include_router(history_router)
+app.include_router(deletion_router)
+app.include_router(notification_router)
+app.include_router(git_router)
+app.include_router(github_router)

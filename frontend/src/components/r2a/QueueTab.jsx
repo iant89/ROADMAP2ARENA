@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Activity, ArrowDown, ArrowRight, ArrowUp, ListOrdered, Pause, Play, PlusCircle, Trash2 } from 'lucide-react'
+import { Activity, ArrowDown, ArrowRight, ArrowUp, ListOrdered, Pause, Play, PlusCircle, Undo2, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { moveQueued, pauseQueued, removeQueued, unpauseQueued } from '@/lib/api'
+import { cancelQueued, moveQueued, pauseQueued, unpauseQueued } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { StatusChip, relativeTime } from './status'
 
@@ -75,9 +75,9 @@ function QueueRow({ job, first, last, busy, onAction, onOpen }) {
       <StatusChip status={job.status} testId="queue-row-status" />
       {confirm ? (
         <div className="flex items-center gap-1.5" data-testid="queue-remove-confirm">
-          <span className="text-xs font-medium text-coral">Remove from queue?</span>
-          <Button size="sm" variant="outline" onClick={() => { setConfirm(false); onAction('remove') }} disabled={busy} data-testid="queue-remove-yes" className="border-coral/40 text-coral hover:bg-coral-soft hover:text-coral">Remove</Button>
-          <Button size="sm" variant="ghost" onClick={() => setConfirm(false)} data-testid="queue-remove-no">Keep</Button>
+          <span className="text-xs font-medium text-coral">Cancel this job? It stays in history.</span>
+          <Button size="sm" variant="outline" onClick={() => { setConfirm(false); onAction('remove') }} disabled={busy} data-testid="queue-remove-yes" className="border-coral/40 text-coral hover:bg-coral-soft hover:text-coral"><XCircle /> Cancel job</Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirm(false)} data-testid="queue-remove-no"><Undo2 /> Keep</Button>
         </div>
       ) : (
         <div className="flex items-center gap-0.5">
@@ -88,7 +88,7 @@ function QueueRow({ job, first, last, busy, onAction, onOpen }) {
           ) : (
             <IconAction label="Pause (moves to the end)" onClick={() => onAction('pause')} disabled={busy} testId="queue-pause" className="text-pause hover:text-pause"><Pause /></IconAction>
           )}
-          <IconAction label="Remove from queue" onClick={() => setConfirm(true)} disabled={busy} testId="queue-remove" className="text-coral hover:text-coral"><Trash2 /></IconAction>
+          <IconAction label="Cancel (keeps it in Job history)" onClick={() => setConfirm(true)} disabled={busy} testId="queue-remove" className="text-coral hover:text-coral"><XCircle /></IconAction>
         </div>
       )}
     </li>
@@ -100,7 +100,7 @@ const ACTIONS = {
   down: { fn: (id) => moveQueued(id, 'down') },
   pause: { fn: pauseQueued, msg: 'Paused - moved to the end of the queue' },
   unpause: { fn: unpauseQueued, msg: 'Unpaused - eligible to run again' },
-  remove: { fn: removeQueued, msg: 'Removed from the queue - kept in Job history as cancelled' },
+  remove: { fn: cancelQueued, msg: 'Cancelled - removed from the queue, kept in Job history' },
 }
 
 // Job queue tab: running job pinned on top, then queued/paused jobs in order.
@@ -169,7 +169,7 @@ export default function QueueTab({ queue, error, refresh, onOpenCurrent, onOpenJ
         <div className="grid place-items-center rounded-xl border border-dashed border-input bg-paper px-6 py-12 text-center" data-testid="queue-empty">
           <ListOrdered className="size-7 text-muted-foreground" />
           <p className="mt-3 text-sm font-semibold">The queue is empty</p>
-          <p className="mt-1 max-w-sm text-[13px] text-muted-foreground">Jobs added while another one runs wait here. Reorder them, pause them, or remove them.</p>
+          <p className="mt-1 max-w-sm text-[13px] text-muted-foreground">Jobs added while another one runs wait here. Reorder, pause or cancel them.</p>
           <Button size="sm" className="mt-4" onClick={onCreate}><PlusCircle /> Create a job <ArrowRight /></Button>
         </div>
       )}

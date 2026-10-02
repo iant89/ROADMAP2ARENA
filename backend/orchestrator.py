@@ -16,7 +16,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from typing import Callable
+from typing import Awaitable, Callable
 
 import openai
 
@@ -38,11 +38,43 @@ _stop_ops: dict[str, tuple[asyncio.Task, asyncio.Task]] = {}
 STOP_WAIT_SECONDS = 10
 # Called when a job may have finished (set by the scheduler to wake the queue worker).
 on_job_end: Callable[[], None] | None = None
+# Async callbacks (db, job_id, status) run after a job reached done / error / stopped
+# (e.g. notifications). Each runs in its own task; failures are logged and never affect the job.
+on_job_finished: list[Callable[[object, str, str], Awaitable[None]]] = []
+# Awaited hooks (inline, in order, shielded from a stop) - e.g. the per-job git history.
+# They must not raise; exceptions are logged and ignored.
+on_run_start: list[Callable[[object, str], Awaitable[None]]] = []          # (db, job_id)
+on_step_done: list[Callable[[object, str, int], Awaitable[None]]] = []     # (db, job_id, step_index)
+_finish_tasks: set[asyncio.Task] = set()
 
 
 def _notify_end() -> None:
     if on_job_end:
         on_job_end()
+
+
+def emit_finished(db, job_id: str, status: str) -> None:
+    """Schedule the on_job_finished callbacks (fire and forget, shielded from the job task)."""
+    for cb in on_job_finished:
+        async def _run(cb=cb) -> None:
+            try:
+                await cb(db, job_id, status)
+            except Exception:  # noqa: BLE001 - never let a listener break a job
+                logger.exception("on_job_finished callback failed for job %s", job_id)
+        t = asyncio.create_task(_run(), name=f"finished-{job_id}")
+        _finish_tasks.add(t)
+        t.add_done_callback(_finish_tasks.discard)
+
+
+async def _run_hooks(hooks: list, *args) -> None:
+    for cb in hooks:
+        try:
+            # shield: a stop request must not interrupt e.g. a git commit half-way
+            await asyncio.shield(cb(*args))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - hooks never break a job
+            logger.exception("orchestrator hook %s failed", getattr(cb, "__name__", cb))
 
 
 def now_iso() -> str:
@@ -166,6 +198,7 @@ async def mark_stopped(db, job_id: str, reason: str) -> bool:
     }})
     where = f" at step {running['index']}" if running else " between steps"
     await append_log(db, job_id, "warn", f"Job stopped{where} by {reason} - later steps left pending")
+    emit_finished(db, job_id, "stopped")
     _notify_end()
     return True
 
@@ -204,6 +237,7 @@ async def run_job(db, job_id: str) -> None:
         await append_log(db, job_id, "info", f"Job started: {len(steps)} steps, model {job['model']}, arena2api {job['arena_url']}, "
                                              f"step delay {delay:g}s, timeout {timeout:g}s")
     try:
+        await _run_hooks(on_run_start, db, job_id)
         for step in todo:
             idx = step["index"]
             prompt = build_prompt(job.get("project_context", ""), steps, idx, sorted(files))
@@ -231,6 +265,7 @@ async def run_job(db, job_id: str) -> None:
                 await append_log(db, job_id, "error", f"Step {idx} failed: {message}")
                 if len(steps) > idx:
                     await append_log(db, job_id, "error", f"Job stopped - steps {idx + 1}-{len(steps)} left pending")
+                emit_finished(db, job_id, "error")
                 return
 
             artifacts = [{"path": p, "content": c} for p, c in extract_artifacts(response).items()]
@@ -255,13 +290,17 @@ async def run_job(db, job_id: str) -> None:
             if extras:
                 note += f" ({'; '.join(extras)})"
             await append_log(db, job_id, "ok", f"Step {idx} done - {note}")
+            if res.modified_count:
+                await _run_hooks(on_step_done, db, job_id, idx)
             if idx < len(steps) and delay > 0:
                 await asyncio.sleep(delay)
 
         ts = now_iso()
-        await db.jobs.update_one({"id": job_id, "status": "running"},
-                                 {"$set": {"status": "done", "finished_at": ts, "updated_at": ts}})
+        res = await db.jobs.update_one({"id": job_id, "status": "running"},
+                                       {"$set": {"status": "done", "finished_at": ts, "updated_at": ts}})
         await append_log(db, job_id, "ok", f"Job finished - {len(steps)}/{len(steps)} steps, {len(files)} files")
+        if res.modified_count:
+            emit_finished(db, job_id, "done")
     except asyncio.CancelledError:
         # Operator stop: the stop operation records the result after this task ends.
         if job_id not in _stop_requested:
@@ -273,5 +312,6 @@ async def run_job(db, job_id: str) -> None:
         await db.jobs.update_one({"id": job_id}, {"$set": {"status": "error", "error": f"Internal error: {exc}",
                                                             "finished_at": ts, "updated_at": ts}})
         await append_log(db, job_id, "error", f"Internal error: {exc}")
+        emit_finished(db, job_id, "error")
     finally:
         await client.close()

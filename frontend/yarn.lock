@@ -318,6 +318,38 @@
   resolved "https://registry.yarnpkg.com/@floating-ui/utils/-/utils-0.2.12.tgz#afefe785949f16ac4cdd1e695935a321572dd56a"
   integrity sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==
 
+"@git-diff-view/core@^0.1.7":
+  version "0.1.7"
+  resolved "https://registry.yarnpkg.com/@git-diff-view/core/-/core-0.1.7.tgz#5df4f8d2fe0baec44a95f18ae00d0124452b1e3f"
+  integrity sha512-ZW/kumNoUQ8+DgawYhcrABa7TOALYzn3pe723uTHSy6/r35qAwgswJxF1bkdV9Zr+KHuhlFeRLiVhjij59qdIA==
+  dependencies:
+    "@git-diff-view/lowlight" "^0.1.7"
+    fast-diff "^1.3.0"
+    highlight.js "^11.11.0"
+    lowlight "^3.3.0"
+
+"@git-diff-view/lowlight@^0.1.7":
+  version "0.1.7"
+  resolved "https://registry.yarnpkg.com/@git-diff-view/lowlight/-/lowlight-0.1.7.tgz#4a9bab8421f63c3512fb75b6406b41a5be8f4880"
+  integrity sha512-Rkv2ERr83xTSsjlrJxjYVWndREEARG11viTrJ7qyUU+lnPPmSNF1aemp1lKiOLs6sNCeJJdIMhxLFJtKfmRIZw==
+  dependencies:
+    "@types/hast" "^3.0.0"
+    highlight.js "^11.11.0"
+    lowlight "^3.3.0"
+
+"@git-diff-view/react@^0.1.7":
+  version "0.1.7"
+  resolved "https://registry.yarnpkg.com/@git-diff-view/react/-/react-0.1.7.tgz#b6b6eef268079ef907d5546c6dfb70a8d6f98c68"
+  integrity sha512-EMBFgeSpP3nF8hJwy/3bz8sZpxmyuWV20925oTGhslWXpIgg6AZg+KMRmQkz/WjX0D/2LrC3gQZJLE/5x6mfnw==
+  dependencies:
+    "@git-diff-view/core" "^0.1.7"
+    "@types/hast" "^3.0.0"
+    fast-diff "^1.3.0"
+    highlight.js "^11.11.0"
+    lowlight "^3.3.0"
+    reactivity-store "^0.4.0"
+    use-sync-external-store "^1.6.0"
+
 "@hono/node-server@^1.19.9 || ^2.0.5":
   version "2.1.3"
   resolved "https://registry.yarnpkg.com/@hono/node-server/-/node-server-2.1.3.tgz#d30105145a33fd8e492afee4df3eaa3ff1d26b9f"
@@ -507,6 +539,11 @@
   version "1.86.0"
   resolved "https://registry.yarnpkg.com/@oxlint/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.86.0.tgz#bef9b82d6408a5a228b0e31902c8bdd482ad169c"
   integrity sha512-az4dzifCRzES1crwu6pDFXzJTIanrdxXFL9TbiJWrx9LKcuacbR83aPvxDA1LKLNswi/RoqitC7Afcflhu3zBQ==
+
+"@primer/octicons-react@^19.38.0":
+  version "19.38.0"
+  resolved "https://registry.yarnpkg.com/@primer/octicons-react/-/octicons-react-19.38.0.tgz#8c0fa7d82a39bde0345ce25fe3bdd53d4067bc09"
+  integrity sha512-ZzWVrX6kluBaCepsDj/jAxagBOMaRX18LEf723IKpr4E/jdkTdCOtlsN+60Oj7IV9YEVrlUpo9Oky0Tn1heSCA==
 
 "@radix-ui/number@1.1.3":
   version "1.1.3"
@@ -1415,6 +1452,13 @@
   dependencies:
     tslib "^2.4.0"
 
+"@types/hast@^3.0.0":
+  version "3.0.5"
+  resolved "https://registry.yarnpkg.com/@types/hast/-/hast-3.0.5.tgz#48020de4c0e63492f4ca9db42068c108f68b7f8f"
+  integrity sha512-rp/ezSWaD1m44dPKICGhiskI13nVr7qTloFwDa/IYkhhf5nzwP+zIQcIJh3WIFSBOy/H1PzB40jPjMDksN4F+g==
+  dependencies:
+    "@types/unist" "*"
+
 "@types/node@^26.6.4":
   version "26.6.4"
   resolved "https://registry.yarnpkg.com/@types/node/-/node-26.6.4.tgz#5aaac1a7337945f7f9a2de4e0d14e7107157e813"
@@ -1434,6 +1478,11 @@
   dependencies:
     csstype "^3.2.2"
 
+"@types/unist@*":
+  version "3.0.3"
+  resolved "https://registry.yarnpkg.com/@types/unist/-/unist-3.0.3.tgz#acaab0f919ce69cce629c2d4ed2eb4adc1b6c20c"
+  integrity sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==
+
 "@types/validate-npm-package-name@^4.0.2":
   version "4.0.2"
   resolved "https://registry.yarnpkg.com/@types/validate-npm-package-name/-/validate-npm-package-name-4.0.2.tgz#df0f7dac25df7761f7476605ddac54cb1abda26e"
@@ -1445,6 +1494,18 @@
   integrity sha512-yxLaQV9gkhS8ezJqCM6+ndU7mDY6gqAg75NQ+0IjwEI8IYOmQCgkRwHKVSfWXW076DsqMo0Dk+0FK1U+M5RgFw==
   dependencies:
     "@rolldown/pluginutils" "^1.0.1"
+
+"@vue/reactivity@~3.5.30":
+  version "3.5.43"
+  resolved "https://registry.yarnpkg.com/@vue/reactivity/-/reactivity-3.5.43.tgz#26441233103e834616959a032d8fabd4524fd089"
+  integrity sha512-G/c9GyOZNI2jVaaS6OX1EF1SSFSv7H0ERqNTl4+DTFMlZmB5eVAB53aLQNam/7NL2NPtaDD7RdVrzf8uJzMuOA==
+  dependencies:
+    "@vue/shared" "3.5.43"
+
+"@vue/shared@3.5.43", "@vue/shared@~3.5.30":
+  version "3.5.43"
+  resolved "https://registry.yarnpkg.com/@vue/shared/-/shared-3.5.43.tgz#22c11ecf1304bfc6f6b745f3b4ba54c410074338"
+  integrity sha512-uksS7YGMR5NZyr4JNq0Rp+QyLns0ueaz20KwzIPW9R0LH1Vnt4E+XUM29PNseEbf1www2gOuhuDi5AKOIXag9Q==
 
 accepts@^2.0.0:
   version "2.0.0"
@@ -1789,6 +1850,11 @@ depd@^2.0.0, depd@~2.0.0:
   resolved "https://registry.yarnpkg.com/depd/-/depd-2.0.0.tgz#b696163cc757560d09cf22cc8fad1571b79e76df"
   integrity sha512-g7nH6P6dyDioJogAAGprGpCtVImJhpPk/roCzdb3fIh61/s/nPsfR6onyMwkCAR/OlC3yBC0lESvUoQEAssIrw==
 
+dequal@^2.0.0:
+  version "2.0.3"
+  resolved "https://registry.yarnpkg.com/dequal/-/dequal-2.0.3.tgz#2644214f1997d39ed0ee0ece72335490a7ac67be"
+  integrity sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==
+
 detect-libc@^2.0.3:
   version "2.1.2"
   resolved "https://registry.yarnpkg.com/detect-libc/-/detect-libc-2.1.2.tgz#689c5dcdc1900ef5583a4cb9f6d7b473742074ad"
@@ -1798,6 +1864,13 @@ detect-node-es@^1.1.0:
   version "1.1.0"
   resolved "https://registry.yarnpkg.com/detect-node-es/-/detect-node-es-1.1.0.tgz#163acdf643330caa0b4cd7c21e7ee7755d6fa493"
   integrity sha512-ypdmJU/TbBby2Dxibuv7ZLW3Bs1QEmM7nHjEANfohJLvE0XVujisn1qPJcZxg+qDucsr+bP6fLD1rPS3AhJ7EQ==
+
+devlop@^1.0.0:
+  version "1.1.0"
+  resolved "https://registry.yarnpkg.com/devlop/-/devlop-1.1.0.tgz#4db7c2ca4dc6e0e834c30be70c94bbc976dc7018"
+  integrity sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==
+  dependencies:
+    dequal "^2.0.0"
 
 diff@^8.0.2:
   version "8.0.4"
@@ -2002,6 +2075,11 @@ fast-deep-equal@^3.1.3:
   resolved "https://registry.yarnpkg.com/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz#3a7d56b559d6cbc3eb512325244e619a65c6c525"
   integrity sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==
 
+fast-diff@^1.3.0:
+  version "1.3.0"
+  resolved "https://registry.yarnpkg.com/fast-diff/-/fast-diff-1.3.0.tgz#ece407fa550a64d638536cd727e129c61616e0f0"
+  integrity sha512-VxPP4NqbUjj6MaAOafWeUn2cXWLcCtljklUtZf0Ind4XQ+QPtmA0b18zZy0jIQx+ExRVCR/ZQpBmik5lXshNsw==
+
 fast-glob@^3.3.3:
   version "3.3.3"
   resolved "https://registry.yarnpkg.com/fast-glob/-/fast-glob-3.3.3.tgz#d06d585ce8dba90a16b0505c543c3ccfb3aeb818"
@@ -2182,6 +2260,16 @@ hasown@^2.0.2:
   integrity sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==
   dependencies:
     function-bind "^1.1.2"
+
+highlight.js@^11.11.0:
+  version "11.12.0"
+  resolved "https://registry.yarnpkg.com/highlight.js/-/highlight.js-11.12.0.tgz#470d918fd556a76debc40fe5e4b540b6b9cb9890"
+  integrity sha512-nbfWpyRMcMrPMmDwJB+dhX/eiaPKtc2RB+0QZskqJ3WjRA/FDS0e9hZrx8EC/lbEv8gXy98FcDbNa/dspAaJMg==
+
+highlight.js@~11.11.0:
+  version "11.11.2"
+  resolved "https://registry.yarnpkg.com/highlight.js/-/highlight.js-11.11.2.tgz#f53a9178171212014ae428a9771749dd2cc65847"
+  integrity sha512-oaXMACAU0kzOMXBjWpNcX+vlwSBCIAiZ9BHa7gA15NOTtT2L/l8OSZDuqS2XppOhZBPJ7hm4o8ep2kyuip2uEQ==
 
 hono@^4.11.4:
   version "4.13.12"
@@ -2601,6 +2689,15 @@ log-symbols@^6.0.0:
   dependencies:
     chalk "^5.3.0"
     is-unicode-supported "^1.3.0"
+
+lowlight@^3.3.0:
+  version "3.3.0"
+  resolved "https://registry.yarnpkg.com/lowlight/-/lowlight-3.3.0.tgz#007b8a5bfcfd27cc65b96246d2de3e9dd4e23c6c"
+  integrity sha512-0JNhgFoPvP6U6lE/UdVsSq99tn6DhjjpAj5MxG49ewd2mOBVtwWYIT8ClyABhq198aXXODMU6Ox8DrGy/CpTZQ==
+  dependencies:
+    "@types/hast" "^3.0.0"
+    devlop "^1.0.0"
+    highlight.js "~11.11.0"
 
 lru-cache@^5.1.1:
   version "5.1.1"
@@ -3115,6 +3212,15 @@ react@^19.2.8:
   resolved "https://registry.yarnpkg.com/react/-/react-19.3.0.tgz#e20aa3a14687075ce863351b5878b0608c3fbfb2"
   integrity sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog==
 
+reactivity-store@^0.4.0:
+  version "0.4.0"
+  resolved "https://registry.yarnpkg.com/reactivity-store/-/reactivity-store-0.4.0.tgz#5ceba7512c5eb0dba26a44c640ac712b237fe33b"
+  integrity sha512-uL9uoREOBg2o4zUa8vMU0AbvAOk0osPloizscmyZqMvJzcuuKX3ELFYYr1DX8gAcfvlhPduz4QuLZn1eChCu4Q==
+  dependencies:
+    "@vue/reactivity" "~3.5.30"
+    "@vue/shared" "~3.5.30"
+    use-sync-external-store "^1.6.0"
+
 recast@^0.23.11:
   version "0.23.21"
   resolved "https://registry.yarnpkg.com/recast/-/recast-0.23.21.tgz#45eed4cfcaa8ab1724fb30eb2c0bd14f3a0d797b"
@@ -3573,6 +3679,11 @@ use-sidecar@^1.1.3:
   dependencies:
     detect-node-es "^1.1.0"
     tslib "^2.0.0"
+
+use-sync-external-store@^1.6.0:
+  version "1.7.0"
+  resolved "https://registry.yarnpkg.com/use-sync-external-store/-/use-sync-external-store-1.7.0.tgz#6dcb66ef569e02f186af6b3d575f414ce746e18f"
+  integrity sha512-6L+EeigHMQhdaIPNIFUKwfWJSwWFQ8gJbJ2DLOs5sDIegTwR9fRxvnM3uciHKjIZhFz+KAv2emhWMRvDmMcY8A==
 
 util-deprecate@^1.0.2:
   version "1.0.2"

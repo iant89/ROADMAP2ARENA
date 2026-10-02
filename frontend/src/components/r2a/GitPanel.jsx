@@ -1,0 +1,235 @@
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { Archive, RefreshCw, X } from 'lucide-react'
+import { GitBranchIcon, GitCommitIcon, GitCompareIcon, GitPullRequestIcon, MarkGithubIcon, PackageIcon, RepoIcon } from '@primer/octicons-react'
+import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/utils'
+import { compareJobCommits, downloadJobRepo, getJobCommit, getJobGit, initJobGit } from '@/lib/api'
+import { formatDateTime } from './status'
+
+const DiffViewer = lazy(() => import('./DiffViewer'))
+
+function DiffFallback() {
+  return <div className="space-y-2"><Skeleton className="h-8" /><Skeleton className="h-40" /></div>
+}
+
+function CommitDetail({ jobId, sha }) {
+  const [state, setState] = useState({ sha: null, commit: null, error: null })
+  useEffect(() => {
+    let alive = true
+    getJobCommit(jobId, sha)
+      .then((commit) => alive && setState({ sha, commit, error: null }))
+      .catch((err) => alive && setState({ sha, commit: null, error: err.message }))
+    return () => { alive = false }
+  }, [jobId, sha])
+  if (state.error && state.sha === sha) return <p className="p-4 text-sm text-coral" data-testid="git-commit-error">{state.error}</p>
+  const commit = state.sha === sha ? state.commit : null
+  if (!commit) return <div className="space-y-2 p-4"><Skeleton className="h-6 w-2/3" /><Skeleton className="h-40" /></div>
+  return (
+    <div className="space-y-3 p-4" data-testid="git-commit-detail">
+      <div>
+        <p className="text-[15px] font-semibold" data-testid="git-commit-subject">{commit.subject}</p>
+        <p className="mt-0.5 text-[12px] text-muted-foreground">
+          <span className="font-mono">{commit.short_sha}</span> by {commit.author_name} - {formatDateTime(commit.date)}
+          {commit.parents.length === 0 && ' - first commit'}
+        </p>
+      </div>
+      <Suspense fallback={<DiffFallback />}>
+        <DiffViewer key={commit.sha} diff={commit.diff} testId="git-commit-diff" emptyText="No files in this commit (the step produced no named files)." />
+      </Suspense>
+    </div>
+  )
+}
+
+function commitLabel(c) {
+  return `${c.short_sha} - ${c.message}`
+}
+
+// Compare two commits (= two steps' outputs): base..head through the shared DiffViewer.
+function CompareView({ jobId, commits, onClose }) {
+  const [head, setHead] = useState(commits[0]?.sha ?? '')
+  const [base, setBase] = useState(commits[commits.length - 1]?.sha === commits[0]?.sha ? '' : commits[commits.length - 1]?.sha ?? '')
+  const [state, setState] = useState({ key: null, diff: null, error: null })
+  const key = `${base}..${head}`
+  useEffect(() => {
+    if (!head) return undefined
+    let alive = true
+    compareJobCommits(jobId, head, base || undefined)
+      .then((diff) => alive && setState({ key, diff, error: null }))
+      .catch((err) => alive && setState({ key, diff: null, error: err.message }))
+    return () => { alive = false }
+  }, [jobId, head, base, key])
+  const sel = 'h-8 min-w-0 flex-1 rounded-md border border-border bg-card px-2 font-mono text-base sm:text-[12.5px]'
+  return (
+    <div className="space-y-3 p-4" data-testid="git-compare">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="flex items-center gap-2 text-[14px] font-semibold"><GitCompareIcon size={16} /> Compare steps</p>
+        <Button size="xs" variant="ghost" className="ml-auto" onClick={onClose} data-testid="git-compare-close"><X /> Close</Button>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <label className="flex min-w-0 flex-1 items-center gap-2 text-[12px] text-muted-foreground">From
+          <select className={sel} value={base} onChange={(e) => setBase(e.target.value)} data-testid="git-compare-base">
+            <option value="">(parent of "To")</option>
+            {commits.map((c) => <option key={c.sha} value={c.sha}>{commitLabel(c)}</option>)}
+          </select>
+        </label>
+        <label className="flex min-w-0 flex-1 items-center gap-2 text-[12px] text-muted-foreground">To
+          <select className={sel} value={head} onChange={(e) => setHead(e.target.value)} data-testid="git-compare-head">
+            {commits.map((c) => <option key={c.sha} value={c.sha}>{commitLabel(c)}</option>)}
+          </select>
+        </label>
+      </div>
+      {state.key === key && state.error && <p className="text-sm text-coral" data-testid="git-compare-error">{state.error}</p>}
+      {state.key !== key && <DiffFallback />}
+      {state.key === key && state.diff && (
+        <Suspense fallback={<DiffFallback />}>
+          <DiffViewer key={key} diff={state.diff} testId="git-compare-diff" emptyText="No differences between these commits." />
+        </Suspense>
+      )}
+    </div>
+  )
+}
+
+// Git tab of the job detail: the job's local repo, one commit per completed step.
+export default function GitPanel({ job, version }) {
+  const [git, setGit] = useState(null)
+  const [error, setError] = useState(null)
+  const [selected, setSelected] = useState(null)
+  const [busy, setBusy] = useState(null)
+  const [comparing, setComparing] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const g = await getJobGit(job.id)
+      setGit(g)
+      setError(null)
+      setSelected((cur) => (g.commits.some((c) => c.sha === cur) ? cur : g.commits[0]?.sha ?? null))
+    } catch (err) {
+      setError(err.message)
+    }
+  }, [job.id])
+
+  useEffect(() => { load() }, [load, version])
+
+  const download = async (format) => {
+    setBusy(format)
+    try {
+      const res = await downloadJobRepo(job.id, format)
+      toast.success(format === 'bundle' ? 'Git bundle downloaded' : 'Repository downloaded', {
+        description: `${res.filename} (${Math.max(1, Math.round(res.size / 1024))} KB)${format === 'bundle' ? ' - clone it with git clone <file>' : ' - includes the .git folder'}`,
+      })
+    } catch (err) {
+      toast.error('Download failed', { description: err.message })
+    } finally {
+      setBusy(null)
+    }
+  }
+  const init = async () => {
+    setBusy('init')
+    try {
+      const g = await initJobGit(job.id)
+      toast.success('Repository created', { description: `${g.committed_steps.length} step commit${g.committed_steps.length === 1 ? '' : 's'}` })
+      await load()
+    } catch (err) {
+      toast.error('Could not create the repository', { description: err.message })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (error && !git) return <p className="p-6 text-sm text-coral" data-testid="git-error">Could not load the git history: {error}</p>
+  if (!git) return <div className="space-y-3 p-6">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12 rounded-lg" />)}</div>
+
+  if (!git.exists) {
+    const canInit = git.uncommitted_steps > 0 && job.status !== 'running'
+    return (
+      <div className="grid h-full place-items-center p-10 text-center" data-testid="git-empty">
+        <div className="max-w-sm">
+          <RepoIcon size={36} className="mx-auto text-slate" />
+          <p className="mt-3 text-sm font-semibold">No git repository yet</p>
+          <p className="mt-1.5 text-[13px] text-muted-foreground">
+            {canInit
+              ? `This job ran before git history existed. Create a repository with one commit per done step (${git.uncommitted_steps}).`
+              : 'The repository is created when the job starts; every completed step becomes a commit.'}
+          </p>
+          {canInit && <Button size="sm" className="mt-4" onClick={init} disabled={busy === 'init'} data-testid="git-init-button"><RepoIcon size={16} /> {busy === 'init' ? 'Creating...' : 'Create repository'}</Button>}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col" data-testid="git-panel">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
+        <GitBranchIcon size={16} className="text-slate" />
+        <span className="font-mono text-[13px] font-medium" data-testid="git-branch">{git.default_branch}</span>
+        <span className="text-[12px] text-muted-foreground" data-testid="git-commit-count">{git.commit_count} commit{git.commit_count === 1 ? '' : 's'}</span>
+        {git.head && <span className="font-mono text-[12px] text-muted-foreground">HEAD {git.head.slice(0, 7)}</span>}
+        <div className="ml-auto flex flex-wrap gap-2">
+          <Button size="sm" variant={comparing ? 'secondary' : 'outline'} onClick={() => setComparing((v) => !v)} disabled={git.commits.length < 1} aria-pressed={comparing} data-testid="git-compare-button" title="Compare the output of two steps">
+            <GitCompareIcon size={16} /> Compare
+          </Button>
+          <Button size="sm" variant="ghost" onClick={load} title="Refresh" aria-label="Refresh git history" data-testid="git-refresh"><RefreshCw /></Button>
+          <Button size="sm" variant="outline" onClick={() => download('zip')} disabled={!git.commit_count || !!busy} data-testid="git-download-zip" title="ZIP of the working tree including the .git folder">
+            <Archive /> {busy === 'zip' ? 'Packing...' : 'Download repo'}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => download('bundle')} disabled={!git.commit_count || !!busy} data-testid="git-download-bundle" title="Single-file git bundle (git clone file.bundle)">
+            <PackageIcon size={16} /> {busy === 'bundle' ? 'Bundling...' : 'Bundle'}
+          </Button>
+        </div>
+      </div>
+      {git.remotes?.length > 0 && (
+        <ul className="flex flex-wrap gap-x-4 gap-y-1 border-b border-border px-4 py-1.5 text-[12px]" data-testid="git-remotes">
+          {git.remotes.map((r) => (
+            <li key={`${r.full_name}:${r.branch}`} className="flex items-center gap-1.5">
+              <MarkGithubIcon size={16} />
+              <a href={`${r.html_url}/tree/${r.branch}`} target="_blank" rel="noreferrer" className="font-mono underline underline-offset-2">{r.full_name}:{r.branch}</a>
+              <span className="text-muted-foreground">{r.pushed_head?.slice(0, 7)}{r.pushed_head === git.head ? ' (up to date)' : ' (behind)'}</span>
+              {r.pr_url && <a href={r.pr_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 underline"><GitPullRequestIcon size={16} /> #{r.pr_number}</a>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {git.uncommitted_steps > 0 && job.status !== 'running' && (
+        <p className="border-b border-border bg-amber-50 px-4 py-1.5 text-[12px] text-amber-800" data-testid="git-uncommitted">
+          {git.uncommitted_steps} done step{git.uncommitted_steps === 1 ? ' has' : 's have'} no commit (see the Log).{' '}
+          <button type="button" className="underline" onClick={init}>Commit now</button>
+        </p>
+      )}
+      {!git.commits.length ? (
+        <p className="p-6 text-[13px] text-muted-foreground" data-testid="git-no-commits">No commits yet - each completed step is committed here.</p>
+      ) : (
+        <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,auto)_minmax(0,1fr)] lg:grid-cols-[minmax(240px,320px)_minmax(0,1fr)] lg:grid-rows-1">
+          <ul className="max-h-60 overflow-y-auto border-b border-border lg:max-h-none lg:border-r lg:border-b-0" data-testid="git-commit-list">
+            {git.commits.map((c) => (
+              <li key={c.sha}>
+                <button
+                  type="button"
+                  onClick={() => { setSelected(c.sha); setComparing(false) }}
+                  aria-pressed={selected === c.sha}
+                  data-testid={`git-commit-${c.short_sha}`}
+                  className={cn('flex w-full items-start gap-2.5 border-l-2 px-3 py-2.5 text-left hover:bg-muted', selected === c.sha ? 'border-l-teal bg-muted' : 'border-l-transparent')}
+                >
+                  <GitCommitIcon size={16} className="mt-0.5 shrink-0 text-slate" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-medium">{c.message}</span>
+                    <span className="block text-[11.5px] text-muted-foreground">
+                      <span className="font-mono">{c.short_sha}</span> - {c.files_changed} file{c.files_changed === 1 ? '' : 's'}{' '}
+                      <span className="text-teal">+{c.insertions}</span> <span className="text-coral">-{c.deletions}</span>
+                    </span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="min-h-0 overflow-y-auto">
+            {comparing
+              ? <CompareView jobId={job.id} commits={git.commits} onClose={() => setComparing(false)} />
+              : selected && <CommitDetail jobId={job.id} sha={selected} />}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

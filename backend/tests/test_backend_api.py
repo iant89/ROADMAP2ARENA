@@ -21,8 +21,16 @@ import zipfile
 import httpx
 
 BASE = os.environ.get("TEST_BASE_URL", "http://127.0.0.1:8001").rstrip("/") + "/api"
-PROXY = "http://localhost:8080/api"
-STUB = "http://127.0.0.1:9090"
+PROXY = os.environ.get("TEST_PROXY_URL", "http://localhost:8080/api")
+# Running against a private backend (isolated_server sets R2A_TEST_ISOLATED, or TEST_BASE_URL points
+# elsewhere than the dev backend): the Caddy proxy check would hit the shared :8080 stack - skip it.
+ISOLATED = os.environ.get("R2A_TEST_ISOLATED") == "1" or (
+    "TEST_BASE_URL" in os.environ and not BASE.startswith(("http://127.0.0.1:8001", "http://localhost:8001")))
+
+
+class SkipTest(Exception):
+    """Raised by a test that does not apply in this environment (the runner prints SKIP)."""
+STUB = os.environ.get("TEST_STUB_URL", "http://127.0.0.1:9090")
 SUFFIX = secrets.token_hex(3)
 CREATED: list[str] = []
 ISO_Z = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
@@ -101,6 +109,8 @@ def test_config():
 
 
 def test_proxy_routing():
+    if ISOLATED and "TEST_PROXY_URL" not in os.environ:
+        raise SkipTest("isolated run - not touching the shared :8080 proxy (set TEST_PROXY_URL to force)")
     r = httpx.get(f"{PROXY}/config", timeout=10)
     assert r.status_code == 200 and "arena_url" in r.json()
 
@@ -187,7 +197,7 @@ def test_happy_job_lifecycle():
     assert first["status"] in ("running", "done")
     j = wait(jid)
     no_id(j)
-    keys = {"job_id", "status", "error", "failed_step", "title", "created_at", "finished_at", "arena_url", "model",
+    keys = {"job_id", "project_id", "repo_id", "status", "error", "failed_step", "title", "created_at", "finished_at", "arena_url", "model",
             "project_context", "roadmap_md", "step_total", "steps_done", "steps", "log",
             "stopped_step", "restarted_from",  # added with job controls (stop/restart/resume)
             "queue_position", "queued_at", "started_at",  # added with the job queue
@@ -200,7 +210,7 @@ def test_happy_job_lifecycle():
     assert ISO_Z.match(j["created_at"]) and ISO_Z.match(j["finished_at"])
     assert j["finished_at"] >= j["created_at"]
     for s in j["steps"]:
-        assert set(s) == {"index", "title", "description", "status", "error", "artifact_paths"}
+        assert set(s) == {"index", "title", "description", "status", "error", "artifact_paths", "commit_sha"}
         assert s["status"] == "done"
     paths = [s["artifact_paths"] for s in j["steps"]]
     assert sorted(paths[0]) == ["app/main.py", "pyproject.toml"]
@@ -217,7 +227,7 @@ def test_step_detail():
     jid = STATE["happy"]
     s = c.get(f"{BASE}/jobs/{jid}/steps/1").json()
     no_id(s)
-    keys = {"job_id", "index", "title", "description", "status", "prompt", "response", "error", "artifacts",
+    keys = {"job_id", "commit_sha", "index", "title", "description", "status", "prompt", "response", "error", "artifacts",
             "started_at", "finished_at"}
     assert set(s) == keys, set(s) ^ keys
     assert s["job_id"] == jid and s["index"] == 1 and s["status"] == "done"
@@ -276,7 +286,7 @@ def test_list_jobs():
     d = r.json()
     no_id(d)
     assert isinstance(d, list) and 1 <= len(d) <= 20
-    keys = {"job_id", "status", "created_at", "step_total", "steps_done", "title", "model", "failed_step",
+    keys = {"job_id", "project_id", "status", "created_at", "step_total", "steps_done", "title", "model", "failed_step",
             "stopped_step",  # stopped_step added with job controls
             "restarted_from", "queue_position", "queued_at", "started_at", "finished_at", "paused",  # job queue
             "cloned_from"}  # Clone job
@@ -374,10 +384,8 @@ def test_concurrent_create_only_one_wins():
 # ---------------------------------------------------------------- cleanup
 def test_zz_cleanup():
     wait_all()
-    from pymongo import MongoClient
-    env = dict(l.strip().split("=", 1) for l in open("/app/backend/.env") if "=" in l and not l.startswith("#"))
-    db = MongoClient(env["MONGO_URL"], serverSelectionTimeoutMS=5000)[env["DB_NAME"]]
-    db.steps.delete_many({"job_id": {"$in": CREATED}})
-    db.jobs.delete_many({"id": {"$in": CREATED}})
+    # Hard delete through the API (DELETE /api/jobs/{id}, PR #6): works against any backend/DB.
+    for jid in CREATED:
+        c.delete(f"{BASE}/jobs/{jid}")
     for jid in CREATED:
         assert c.get(f"{BASE}/jobs/{jid}").status_code == 404
