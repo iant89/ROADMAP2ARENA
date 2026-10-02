@@ -54,7 +54,7 @@ Notes:
 | B-005 | MINOR | DELETE /api/notifications/settings | Returns 404 "Notification settings not found" instead of 405: DELETE /api/notifications/{notif_id} captures "settings" (also POST /api/notifications/settings/read -> 404). Harmless (no data changed) | VERIFIED |
 | B-006 | MAJOR | POST /api/jobs/{id}/github/push | branch "@{-1}" / "@{-2}" passes validation and the push fails with 502 "git push failed ... invalid refspec 'HEAD:refs/heads/@{-1}'" instead of 422. git_cli.valid_branch runs `git check-ref-format --branch` with cwd=None, so git expands @{-N} against the backend's own working-directory repo (it printed this worktree's previous branches) and returns success | VERIFIED |
 | B-007 | MINOR | POST /api/github/oauth/poll | With no device flow pending but GitHub already connected, it returns 200 {status: connected} instead of the contract's 409 "nothing pending". The code does this on purpose (github_integration.py oauth_poll); the contract table should document it, or the code should return 409 | FIXED |
-| F-006 | CRITICAL | Live stack: job git repos (PR #8) + uvicorn --reload | Job repos live in /app/backend/data/repos, inside the folder the live backend watches with uvicorn --reload. When a later step rewrites an existing .py file (stub-slow step 3 rewrites app/main.py), StatReload restarts the backend and the running job ends as error "Job interrupted by server restart" (no Job finished/failed alert); the queue then moves on. Seen twice (R1 b39b3e82, ed7fc0d7). Fix: keep repos outside the watched dir or add --reload-exclude for data/ | OPEN |
+| F-006 | CRITICAL | Live stack: job git repos (PR #8) + uvicorn --reload | Job repos live in /app/backend/data/repos, inside the folder the live backend watches with uvicorn --reload. When a later step rewrites an existing .py file (stub-slow step 3 rewrites app/main.py), StatReload restarts the backend and the running job ends as error "Job interrupted by server restart" (no Job finished/failed alert); the queue then moves on. Seen twice (R1 b39b3e82, ed7fc0d7). Fix: keep repos outside the watched dir or add --reload-exclude for data/ | VERIFIED |
 
 ## Test Log
 
@@ -290,3 +290,20 @@ Retested: F-003 VERIFIED (mobile), F-004 VERIFIED, F-005 VERIFIED, V-001/V-002/V
 Not reproduced on rerun (not tracked): one mobile queue run where the unpaused job stayed paused on the server; rerun passed.
 Cleanup: all 33 test_ jobs of this run (32 + 1 for the GitHub flows) deleted through the app (DELETE /api/jobs/{id} and bulk-delete); their repos are gone. This run's 12 leftover alerts deleted by id; the 18 earlier alerts are untouched (still unread). Settings, notification settings (webhook/SMTP off and empty, password_set false) and GitHub state (not connected, no client id) match the values recorded before the run; only updated_at changed.
 Not tested: Browser notification toggle (headless Chromium reports permission "denied", so the toggle is disabled). Real GitHub, webhook and SMTP (not allowed).
+
+### Frontend test run - 2026-10-02 01:47 ET
+Tester: frontend testing agent
+Scope: F-006 retest on the live app at http://localhost:8080 (a7fa942, fix 8fd5f70: repos in /app/data/repos, uvicorn --reload-dir /app/backend with excludes for tests/*, data/*, *.git*). Headless Chromium, desktop 1280x800, plus a mobile 390x844 sanity check. Script /app/frontend/tests/f006_retest.py, state in /tmp/r2a5. For each job I checked the backend worker pid before and after, and checked the new lines of backend.err.log for Reloading/Shutting down/interrupted.
+Result: PASS
+Flows:
+desktop 4-step stub-slow job (created in the UI) - PASS: Completed 4/4, no error; steps 3 and 4 modify app/main.py; Git tab "4 commits" Step 1..4; repo /app/data/repos/<id>; worker pid unchanged, no reload lines
+desktop stub-503-at-3 job (4 steps) - PASS: Failed at step 3 with "Step 3 failed: arena2api returned 503 ..." (no restart message); Git tab 2 commits; repo under /app/data/repos
+desktop Resume of that failed job from its detail page (model override stub-slow) - PASS: resumed_from_step 3, Completed 4/4, no error, Git tab 4 commits (step 3 rewrote app/main.py), same worker pid
+mobile sanity: history list, finished job detail, Git tab in viewport, 4 commits, commit diff opens, no horizontal overflow - PASS
+/app/backend/data/repos does not exist before or after the run; no reload in the backend log during the run (worker pid 1035044 throughout)
+Failures: none
+Console errors: none. No page exceptions.
+Network failures: none (no requestfailed, wrong host or /api >=400).
+Retested: F-006 VERIFIED
+Cleanup: both test_ jobs deleted through the app (DELETE /api/jobs/{id}), their repos are gone from /app/data/repos, and their 6 alerts were deleted by id; the 18 earlier alerts are untouched. Settings were not changed (checked against the snapshot taken before the run).
+Not tested: the reload exclude patterns themselves (no backend file edits allowed); stub-503 in the middle of a resume.
