@@ -33,7 +33,7 @@ REPO_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 FULL_NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$")
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9._-]{8,100}$")
 DEFAULT_AUTO_PUSH = {"enabled": False, "private": True}
-KEY_HINT = ("Set a valid R2A_SECRET_KEY in backend/.env (generate one with: /app/venv/bin/python -c \"from "
+KEY_HINT = ("Set a valid R2A_SECRET_KEY in backend/.env (from the repository root, generate one with: ./venv/bin/python -c \"from "
             "cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\") and restart the backend - "
             "it encrypts the GitHub token at rest")
 ENV_HINT = "R2A_GITHUB_TOKEN is set in backend/.env and overrides Settings - remove it there to connect from the UI"

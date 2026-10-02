@@ -1,7 +1,7 @@
 """Unit tests for the GitHub client, error mapping, watcher logic and git push - mocked with respx
 and local bare repos. No server, no network, never github.com.
 
-    /app/venv/bin/python tests/test_github_client.py
+    ./venv/bin/python backend/tests/test_github_client.py (from the repository root)
 """
 from __future__ import annotations
 
@@ -12,6 +12,15 @@ import subprocess
 import sys
 import tempfile
 
+# Importing the client also imports orchestrator/settings. These are inert defaults,
+# not a running MongoDB or gateway; keep this mocked suite runnable without .env.
+for key, value in {
+    "MONGO_URL": "mongodb://127.0.0.1:27017", "DB_NAME": "roadmap2arena_github_client_tests",
+    "ARENA2API_URL": "http://127.0.0.1:9090", "ARENA2API_MODEL": "gpt-4o",
+    "ARENA_STEP_DELAY_SECONDS": "0.2", "ARENA_REQUEST_TIMEOUT_SECONDS": "300", "CORS_ORIGINS": "*",
+}.items():
+    os.environ.setdefault(key, value)
+os.environ["ARENA2API_API_KEY"] = ""
 os.environ["GITHUB_API_URL"] = "https://api.github.test"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

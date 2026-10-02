@@ -20,6 +20,10 @@ MONGO_URL = _required("MONGO_URL")
 DB_NAME = _required("DB_NAME")
 ARENA2API_URL = _required("ARENA2API_URL")
 ARENA2API_MODEL = _required("ARENA2API_MODEL")
+# Optional, server-only gateway credential. Never saved in jobs or public settings.
+ARENA2API_API_KEY = os.environ.get("ARENA2API_API_KEY", "").strip()
+if any(ord(c) < 32 or ord(c) > 126 for c in ARENA2API_API_KEY):
+    raise RuntimeError("ARENA2API_API_KEY must contain only printable ASCII characters")
 ARENA_STEP_DELAY_SECONDS = float(_required("ARENA_STEP_DELAY_SECONDS"))
 ARENA_REQUEST_TIMEOUT_SECONDS = float(_required("ARENA_REQUEST_TIMEOUT_SECONDS"))
 CORS_ORIGINS = [o.strip() for o in _required("CORS_ORIGINS").split(",") if o.strip()]
