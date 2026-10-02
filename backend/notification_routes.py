@@ -83,6 +83,8 @@ async def mark_read(notif_id: str):
 
 @router.delete("/{notif_id}")
 async def delete_one(notif_id: str):
+    if notif_id == "settings":  # B-005: don't treat the settings path as a notification id
+        raise HTTPException(status_code=405, detail="Method Not Allowed", headers={"Allow": "GET, PUT"})
     res = await db.notifications.delete_one({"id": notif_id})
     if not res.deleted_count:
         raise HTTPException(status_code=404, detail=f"Notification {notif_id} not found")

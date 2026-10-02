@@ -10,7 +10,9 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from pymongo import ASCENDING, DESCENDING
 
@@ -83,6 +85,17 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="ROADMAP2ARENA", lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(_request, exc: RequestValidationError):
+    """Return the standard 422 shape but never echo the submitted input back (B-004).
+
+    FastAPI's default handler includes each error's raw "input", which can contain
+    secrets such as the SMTP password sent to /api/notifications/settings.
+    """
+    errors = [{k: v for k, v in err.items() if k not in ("input", "ctx")} for err in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
