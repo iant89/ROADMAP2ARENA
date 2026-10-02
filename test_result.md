@@ -11,12 +11,12 @@
 ## Test Request
 
 Agent: backend
-Date: 2026-10-01 20:43 ET
+Date: 2026-10-01 20:52 ET
 Built or changed: stop/restart/resume endpoints for jobs (new "stopped" status for jobs and steps), orchestrator task registry and resume history rebuild
 Key endpoints or flows: POST /api/jobs/{id}/stop, POST /api/jobs/{id}/restart (optional body {arena_url, model}), POST /api/jobs/{id}/resume (optional body {arena_url, model}) + regression of GET /api/config, POST /api/roadmap/parse, POST /api/jobs, GET /api/jobs, GET /api/jobs/{id}, GET /api/jobs/{id}/steps/{index}, GET /api/jobs/{id}/download
 Data: real backend
 Features present: sessions no, auth no, integrations: arena2api via local stand-in only
-Retest: none
+Retest: B-003
 Test accounts: none
 Notes:
 - Stand-in on http://127.0.0.1:9090 (backend http://127.0.0.1:8001/api, or via Caddy http://localhost:8080/api). Magic models: stub-503, stub-503-at-N (503 on turn N every time), stub-503-once-at-N (503 on turn N only the first time per stub process; note this state is per stub process, so use a fresh N or another model if it already fired), stub-slow (5 s every call), stub-slow-at-N (5 s only on turn N - good for stopping mid-step).
@@ -35,6 +35,7 @@ Notes:
 | B-002 | MAJOR | POST /api/jobs | One-job-at-a-time rule is racy: 5 concurrent POSTs all returned 201 and 5 jobs ran at once (expected one 201 + four 409); check-then-insert in server.py create_job | VERIFIED |
 | F-001 | MAJOR | Frontend StartForm validation | Empty/whitespace model only disables Start job silently; no error message explains why (expected a clear error) | VERIFIED |
 | F-002 | MINOR | Frontend App URL state | Starting/opening a job does not put ?job=<id> in the URL, so a reload drops back to the empty form (job still reachable via Recent jobs) | SKIPPED |
+| B-003 | CRITICAL | POST /api/jobs/{id}/stop | Concurrent stop calls on a running job (4 parallel) all return 200 with status "running"; job and step stay "running" with no task (no stop log line), blocking every new job until stop is called again. Repeat cancel() in orchestrator.stop interrupts the CancelledError handler/mark_stopped in run_job | FIXED |
 
 ## Test Log
 
@@ -108,3 +109,14 @@ Retested:
 - F-001 VERIFIED: no messages on first load; empty and whitespace-only model show "Model is required" under the field (aria-invalid=true) and disable Start job; ftp://localhost:9090 and localhost:9090 show "Use an http:// or https:// URL"; empty URL shows "arena2api base URL is required"; both messages can show at once; valid values clear both and re-enable Start; no POST /api/jobs was sent and status stayed Idle.
 Not tested: F-002 (SKIPPED by request); transcript, log, deep link, recent jobs, routes (not in this regression scope); tablet/mobile; backend restart mid-job; real arena2api.
 Note: early run_job attempts failed because the Vite dev server sent {"type":"full-reload"} over its websocket when files under /app/frontend changed during a run (the tester's own state file and script edits in /app/frontend/tests). This came from the test harness, not the app. The state file was moved to /tmp, and run_job then passed with no reloads. Tester jobs left orphaned by those reloads were included in the cleanup.
+
+### Backend test run - 2026-10-01 20:47 ET
+Tester: backend testing agent
+Scope: feat/job-controls: POST /api/jobs/{id}/stop, /restart, /resume (happy paths, stopped_step/restarted_from set and persisted, state-transition 409s, 422 override validation, 404 unknown/malformed ids, 405 wrong method, abandoned slow request never flips step to done, earlier steps intact after stop and resume, history rebuild checked via "stub reply for user turn N" with stub-slow-at-2, stub-503-at-3 + model override and stub-503-once-at-2, stop between steps, concurrent restart/resume/create one-job rule, concurrent stops) + full regression of the existing API. New suite /app/backend/tests/test_job_controls.py (run directly with /app/venv/bin/python); regression via run_tests.py (Axiom's test_backend_api.py updates kept). Test files written before any job started; no edits under /app/backend while jobs ran. All test jobs deleted.
+Result: FAIL
+Passed: 36   Failed: 1
+Failures:
+- [B-003][CRITICAL] POST /api/jobs/{id}/stop x4 in parallel on a job mid-step (stub-slow-at-2) - expected job "stopped", stopped_step 2, one 200 (others 200/409) vs actual four 200s with body status "running", stopped_step null; job and step 2 still "running" after 6 s with no stop log line, so any_job_running() returns 409 for all new jobs until another stop - orchestrator.stop calls task.cancel() on every call; the 2nd cancel lands while run_job's CancelledError handler awaits mark_stopped, aborting it (reproduced twice)
+Retested: none (no Retest items or FIXED issues)
+Not tested: backend restart mid-job / resuming an "interrupted by server restart" job (restarting a running backend is not allowed for the tester); 500-entry log cap; real arena2api.
+

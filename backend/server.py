@@ -237,9 +237,20 @@ async def stop_job(job_id: str):
     if job["status"] != "running":
         raise HTTPException(status_code=409, detail=f"Job is {job['status']}, only a running job can be stopped")
     if not await orchestrator.stop(db, job_id):
-        # Marked running in the DB but no task in this process: record the stop directly.
-        await orchestrator.mark_stopped(db, job_id, "operator (no active task)")
+        # No task yet/anymore. Take the start lock so a resume that already set the
+        # job running has also started its task, then decide.
+        async with _job_start_lock:
+            if orchestrator.is_running(job_id):
+                stopping = True
+            else:
+                stopping = False
+                await orchestrator.mark_stopped(db, job_id, "operator (no active task)")
+        if stopping:
+            await orchestrator.stop(db, job_id)
     job = await db.jobs.find_one({"id": job_id}, {"_id": 0, "status": 1, "stopped_step": 1, "steps_done": 1})
+    if job["status"] != "stopped":
+        # Finished naturally (or failed) before the stop could take effect.
+        raise HTTPException(status_code=409, detail=f"Job finished as {job['status']} before it could be stopped")
     return {"job_id": job_id, "status": job["status"], "stopped_step": job.get("stopped_step"),
             "steps_done": job["steps_done"]}
 

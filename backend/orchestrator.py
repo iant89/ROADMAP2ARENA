@@ -30,6 +30,9 @@ logger = logging.getLogger("roadmap2arena.orchestrator")
 _tasks: dict[str, asyncio.Task] = {}
 # Jobs whose cancellation was requested by an operator (vs. server shutdown).
 _stop_requested: set[str] = set()
+# One in-flight stop operation per job: (operation task, job task it targets).
+# Concurrent stop callers await the same operation instead of cancelling again.
+_stop_ops: dict[str, tuple[asyncio.Task, asyncio.Task]] = {}
 STOP_WAIT_SECONDS = 10
 
 
@@ -88,25 +91,60 @@ def start(db, job_id: str) -> None:
 
 
 async def stop(db, job_id: str) -> bool:
-    """Cancel a running job's task and wait until it has recorded the stop.
+    """Stop a running job; safe to call concurrently.
 
-    Returns False if no task is running for this job in this process.
+    The first caller starts a single stop operation that cancels the job task
+    exactly once, waits for it to end and then records the stop. Later callers
+    await that same operation. Returns False if no task is running for this
+    job in this process.
     """
     task = _tasks.get(job_id)
+    existing = _stop_ops.get(job_id)
+    if existing and (task is None or existing[1] is task):
+        await asyncio.shield(existing[0])
+        return True
     if not task or task.done():
         return False
+    op = asyncio.create_task(_stop_operation(db, job_id, task), name=f"stop-{job_id}")
+    _stop_ops[job_id] = (op, task)
+
+    def _cleanup(_t: asyncio.Task) -> None:
+        if _stop_ops.get(job_id, (None,))[0] is op:
+            _stop_ops.pop(job_id, None)
+
+    op.add_done_callback(_cleanup)
+    await asyncio.shield(op)
+    return True
+
+
+async def _stop_operation(db, job_id: str, task: asyncio.Task) -> None:
     _stop_requested.add(job_id)
-    task.cancel()
+    task.cancel()  # cancelled exactly once per job task
     try:
         await asyncio.wait_for(asyncio.shield(task), timeout=STOP_WAIT_SECONDS)
     except (asyncio.CancelledError, asyncio.TimeoutError):
         pass
-    return True
+    except Exception:  # noqa: BLE001 - run_job handles its own errors
+        logger.exception("job %s task ended with an error while stopping", job_id)
+    # Finalise here, outside the cancelled task, so nothing can interrupt it.
+    await mark_stopped(db, job_id, "operator")
 
 
-async def mark_stopped(db, job_id: str, reason: str) -> None:
-    """Record a stopped job: running step -> stopped, later steps stay pending."""
+async def mark_stopped(db, job_id: str, reason: str) -> bool:
+    """Record a stopped job: running step -> stopped, later steps stay pending.
+
+    Idempotent: only a job that is still "running" is changed (and logged), so a
+    job that finished naturally just before the stop keeps its final status.
+    Returns True if this call recorded the stop.
+    """
     ts = now_iso()
+    claimed = await db.jobs.find_one_and_update(
+        {"id": job_id, "status": "running"},
+        {"$set": {"status": "stopped", "error": None, "failed_step": None, "finished_at": ts, "updated_at": ts}},
+        projection={"_id": 0, "id": 1},
+    )
+    if not claimed:
+        return False
     running = await db.steps.find_one({"job_id": job_id, "status": "running"}, {"_id": 0, "index": 1})
     await db.steps.update_many(
         {"job_id": job_id, "status": "running"},
@@ -114,11 +152,20 @@ async def mark_stopped(db, job_id: str, reason: str) -> None:
     )
     done = await db.steps.count_documents({"job_id": job_id, "status": "done"})
     await db.jobs.update_one({"id": job_id}, {"$set": {
-        "status": "stopped", "error": None, "failed_step": None, "steps_done": done,
-        "stopped_step": running["index"] if running else None, "finished_at": ts, "updated_at": ts,
+        "steps_done": done, "stopped_step": running["index"] if running else None,
     }})
     where = f" at step {running['index']}" if running else " between steps"
     await append_log(db, job_id, "warn", f"Job stopped{where} by {reason} - later steps left pending")
+    return True
+
+
+async def _mark_shutdown(db, job_id: str) -> None:
+    ts = now_iso()
+    await db.jobs.update_one({"id": job_id, "status": "running"},
+                             {"$set": {"status": "error", "error": "Job cancelled (server shutdown)",
+                                       "finished_at": ts, "updated_at": ts}})
+    await db.steps.update_many({"job_id": job_id, "status": "running"},
+                               {"$set": {"status": "error", "error": "cancelled (server shutdown)"}})
 
 
 async def run_job(db, job_id: str) -> None:
@@ -200,14 +247,9 @@ async def run_job(db, job_id: str) -> None:
                                  {"$set": {"status": "done", "finished_at": ts, "updated_at": ts}})
         await append_log(db, job_id, "ok", f"Job finished - {len(steps)}/{len(steps)} steps, {len(files)} files")
     except asyncio.CancelledError:
-        if job_id in _stop_requested:
-            await mark_stopped(db, job_id, "operator")
-        else:
-            ts = now_iso()
-            await db.jobs.update_one({"id": job_id}, {"$set": {"status": "error", "error": "Job cancelled (server shutdown)",
-                                                                "finished_at": ts, "updated_at": ts}})
-            await db.steps.update_many({"job_id": job_id, "status": "running"},
-                                       {"$set": {"status": "error", "error": "cancelled (server shutdown)"}})
+        # Operator stop: the stop operation records the result after this task ends.
+        if job_id not in _stop_requested:
+            await asyncio.shield(_mark_shutdown(db, job_id))
         raise
     except Exception as exc:  # noqa: BLE001 - unexpected internal error
         logger.exception("job %s crashed", job_id)
