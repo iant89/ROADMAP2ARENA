@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle, Loader2, XCircle } from 'lucide-react'
+import { CheckCircle2, Circle, CircleStop, Loader2, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export const STATUS_META = {
@@ -6,6 +6,7 @@ export const STATUS_META = {
   running: { label: 'Running', icon: Loader2, tone: 'text-amber', chip: 'bg-amber-soft text-amber border-amber/30' },
   done: { label: 'Done', icon: CheckCircle2, tone: 'text-teal', chip: 'bg-teal-soft text-teal border-teal/30' },
   error: { label: 'Error', icon: XCircle, tone: 'text-coral', chip: 'bg-coral-soft text-coral border-coral/30' },
+  stopped: { label: 'Stopped', icon: CircleStop, tone: 'text-stop', chip: 'bg-stop-soft text-stop border-stop/30' },
   idle: { label: 'Idle', icon: Circle, tone: 'text-slate', chip: 'bg-card text-muted-foreground border-border' },
 }
 

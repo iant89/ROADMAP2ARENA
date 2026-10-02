@@ -30,7 +30,7 @@ export default function HeaderBar({ job, onDownload, downloading, onOpenRecent }
         <div className="flex min-w-[180px] flex-1 items-center gap-3" data-testid="job-progress">
           <Progress
             value={pct}
-            className={cn('h-2 bg-secondary', status === 'error' && '[&>div]:bg-coral', status === 'done' && '[&>div]:bg-teal')}
+            className={cn('h-2 bg-secondary', status === 'error' && '[&>div]:bg-coral', status === 'stopped' && '[&>div]:bg-stop', status === 'done' && '[&>div]:bg-teal')}
           />
           <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
             {done} / {total} steps

@@ -10,6 +10,7 @@ const POLL_MS = 1500
 export function useJob(jobId) {
   const [job, setJob] = useState(null)
   const [error, setError] = useState(null)
+  const [pollKey, setPollKey] = useState(0)
   const lastStatus = useRef({})
   const errorToastShown = useRef(false)
 
@@ -22,6 +23,8 @@ export function useJob(jobId) {
         toast.success('Job finished', { description: `${next.steps_done}/${next.step_total} steps done - ${next.artifacts.length} files ready for ZIP` })
       } else if (prev === 'running' && next.status === 'error') {
         toast.error(`Step ${next.failed_step ?? '?'} failed`, { description: next.error })
+      } else if (prev === 'running' && next.status === 'stopped') {
+        toast(`Job stopped${next.stopped_step ? ` at step ${next.stopped_step}` : ''}`, { description: 'Resume continues from the first unfinished step.' })
       }
       lastStatus.current[jobId] = next.status
       errorToastShown.current = false
@@ -56,7 +59,10 @@ export function useJob(jobId) {
       alive = false
       clearTimeout(timer)
     }
-  }, [jobId, refresh])
+  }, [jobId, refresh, pollKey])
 
-  return { job, error, refresh }
+  // Call after an action that sets the job running again (e.g. resume).
+  const restartPolling = useCallback(() => setPollKey((k) => k + 1), [])
+
+  return { job, error, refresh, restartPolling }
 }

@@ -1,4 +1,4 @@
-import { CircleCheckBig, Download, TriangleAlert } from 'lucide-react'
+import { CircleCheckBig, CircleStop, Download, TriangleAlert } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 
@@ -14,7 +14,22 @@ export default function JobAlerts({ job, onDownload }) {
         <AlertDescription className="space-y-1.5 text-[13px] text-foreground/85">
           <p className="font-mono text-[12px] break-words" data-testid="job-error-text">{(job.error || '').replace(/^Step \d+ failed: /, '')}</p>
           {job.error_hint && !/Chrome tab/i.test(job.error || '') && <p className="font-medium text-coral">Hint: {job.error_hint}</p>}
-          <p className="text-muted-foreground">Later steps were left pending. Files from completed steps can still be downloaded.</p>
+          <p className="text-muted-foreground">Later steps were left pending. Files from completed steps can still be downloaded, and Resume retries from step {job.failed_step ?? job.steps.find((s) => s.status !== 'done')?.index}.</p>
+        </AlertDescription>
+      </Alert>
+    )
+  }
+  if (job.status === 'stopped') {
+    const next = job.steps.find((s) => s.status !== 'done')
+    return (
+      <Alert className="r2a-rise border-stop/35 bg-stop-soft px-4 py-3.5 text-stop" data-testid="job-stopped-alert">
+        <CircleStop />
+        <AlertTitle className="font-semibold">
+          Stopped{job.stopped_step ? ` at step ${job.stopped_step} - ${job.steps[job.stopped_step - 1]?.title}` : ''}
+        </AlertTitle>
+        <AlertDescription className="text-[13px] text-foreground/85">
+          {job.steps_done} of {job.step_total} steps finished.
+          {next ? ` Resume continues from step ${next.index}; Restart starts a new job from step 1.` : ''}
         </AlertDescription>
       </Alert>
     )

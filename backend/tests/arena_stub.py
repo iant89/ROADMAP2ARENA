@@ -7,7 +7,14 @@ history, so step N of a job gets canned reply N (cycled).
 Magic model names:
   stub-503   -> HTTP 503 (simulates arena2api without a session token)
   stub-slow  -> sleeps STUB_SLOW_SECONDS (default 5) per call, for 409 testing
-  stub-503-at-N -> HTTP 503 on the N-th user turn only
+  stub-503-at-N -> HTTP 503 on the N-th user turn only (every time)
+  stub-503-once-at-N -> HTTP 503 on the N-th user turn the first time only
+                   (per stub process), so a resumed job then succeeds
+  stub-slow-at-N -> sleeps STUB_SLOW_SECONDS only on the N-th user turn
+
+Every reply starts with "(stub reply for user turn N of the conversation)",
+so callers can check that the full history was sent (e.g. after a resume
+from step 3 the reply must say turn 3, not turn 1).
 
 Run: /app/venv/bin/uvicorn tests.arena_stub:app --host 127.0.0.1 --port 9090
 (from /app/backend).
@@ -16,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 import uuid
 
@@ -26,6 +34,7 @@ FENCE = "```"
 SLOW_SECONDS = float(os.environ.get("STUB_SLOW_SECONDS", "5"))
 
 app = FastAPI(title="arena2api stub")
+_fired_once: set[str] = set()
 
 
 def _turn_1() -> str:
@@ -134,7 +143,7 @@ def _error(status: int, message: str) -> JSONResponse:
 
 @app.get("/v1/models")
 async def models():
-    return {"object": "list", "data": [{"id": m, "object": "model"} for m in ("gpt-4o", "stub-503", "stub-slow")]}
+    return {"object": "list", "data": [{"id": m, "object": "model"} for m in ("gpt-4o", "stub-503", "stub-503-at-3", "stub-503-once-at-3", "stub-slow", "stub-slow-at-2")]}
 
 
 @app.post("/v1/chat/completions")
@@ -147,8 +156,13 @@ async def chat(request: Request):
         return _error(503, "no upstream session token available")
     if model.startswith("stub-503-at-") and model.rsplit("-", 1)[-1].isdigit() and turn == int(model.rsplit("-", 1)[-1]):
         return _error(503, "no upstream session token available")
-    if model == "stub-slow":
+    once = re.fullmatch(r"stub-503-once-at-(\d+)", model)
+    if once and turn == int(once.group(1)) and model not in _fired_once:
+        _fired_once.add(model)
+        return _error(503, "no upstream session token available")
+    slow_at = re.fullmatch(r"stub-slow-at-(\d+)", model)
+    if model == "stub-slow" or (slow_at and turn == int(slow_at.group(1))):
         await asyncio.sleep(SLOW_SECONDS)
-    content = TURNS[(max(turn, 1) - 1) % len(TURNS)]()
+    content = f"(stub reply for user turn {turn} of the conversation)\n\n" + TURNS[(max(turn, 1) - 1) % len(TURNS)]()
     prompt_chars = sum(len(m.get("content") or "") for m in messages)
     return _completion(model, content, prompt_chars)

@@ -10,15 +10,22 @@
 
 ## Test Request
 
-Agent: frontend
-Date: 2026-10-01 20:11 ET
-Built or changed: Inline validation message for empty model (F-001)
-Key endpoints or flows: validation flow (clear the Model field or enter whitespace -> inline "Model is required" under the field and Start job disabled; a non-http(s) arena2api URL such as ftp://... -> inline "Use an http:// or https:// URL"; fixing the values removes the messages and re-enables Start) + quick regression of run_job, artifacts, download_zip, error_job
+Agent: backend
+Date: 2026-10-01 20:43 ET
+Built or changed: stop/restart/resume endpoints for jobs (new "stopped" status for jobs and steps), orchestrator task registry and resume history rebuild
+Key endpoints or flows: POST /api/jobs/{id}/stop, POST /api/jobs/{id}/restart (optional body {arena_url, model}), POST /api/jobs/{id}/resume (optional body {arena_url, model}) + regression of GET /api/config, POST /api/roadmap/parse, POST /api/jobs, GET /api/jobs, GET /api/jobs/{id}, GET /api/jobs/{id}/steps/{index}, GET /api/jobs/{id}/download
 Data: real backend
-Features present: sessions no, auth no, integrations: arena2api via local stand-in at http://localhost:9090 only (form default URL)
-Retest: F-001
+Features present: sessions no, auth no, integrations: arena2api via local stand-in only
+Retest: none
 Test accounts: none
-Notes: Same environment as before: UI at http://localhost:8080 (Caddy -> Vite 5173 and /api -> backend 127.0.0.1:8001), local arena2api stand-in on 127.0.0.1:9090 (magic models stub-503, stub-503-at-3, stub-slow). Only one job can run at a time (409 otherwise), so wait for each job to finish. Inline messages appear only after a field has been edited (not on first load). F-002 is intentionally not fixed in this round. Do not edit application code.
+Notes:
+- Stand-in on http://127.0.0.1:9090 (backend http://127.0.0.1:8001/api, or via Caddy http://localhost:8080/api). Magic models: stub-503, stub-503-at-N (503 on turn N every time), stub-503-once-at-N (503 on turn N only the first time per stub process; note this state is per stub process, so use a fresh N or another model if it already fired), stub-slow (5 s every call), stub-slow-at-N (5 s only on turn N - good for stopping mid-step).
+- Every stub reply starts with "(stub reply for user turn N of the conversation)". Resume expectation: after resuming at step k, the step-k response must say turn k (not turn 1), because the orchestrator rebuilds the chat history from the done steps' stored prompt/response pairs (user, assistant, in order); previously created files must be listed in the step-k prompt.
+- Stop: only for running jobs (409 otherwise, 404 unknown); the running step becomes "stopped", later steps stay pending, job "stopped" with stopped_step and finished_at; the abandoned request must never flip the step to done later (wait > 5 s after stopping a stub-slow call).
+- Resume: only error/stopped jobs (409 for done/running or when another job runs); same job_id; steps from k on are reset to pending; overrides validated (422 for non-http(s) URL / empty model). Restart: only done/error/stopped jobs; 201 with a NEW job_id, restarted_from = old id; same validation.
+- One job at a time applies to POST /api/jobs, resume and restart (409); wait for each job to finish (or stop it) before the next.
+- New response fields: stopped_step and restarted_from on job detail, stopped_step on the job list. The backend suite (tests/test_backend_api.py) key-set assertions were updated for these fields by the main agent.
+- Put test scripts in /app/backend/tests/.
 
 ## Issue Tracker
 
