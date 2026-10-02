@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
-import { toast } from 'sonner'
+import { useEffect, useState } from 'react'
 import { ArrowLeft, Download, FileText, ListOrdered } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -7,8 +6,8 @@ import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { downloadZip, restartJob, resumeJob, stopJob } from '@/lib/api'
 import { useJob } from '@/hooks/useJob'
+import { useJobActions } from '@/hooks/useJobActions'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 import JobControls from './JobControls'
@@ -17,7 +16,7 @@ import RoadmapChecklist from './RoadmapChecklist'
 import WorkspaceTabs from './WorkspaceTabs'
 import { StatusChip, formatDateTime } from './status'
 
-function QueuedAlert({ job, onOpenQueue }) {
+export function QueuedAlert({ job, onOpenQueue }) {
   const paused = job.status === 'paused'
   return (
     <Alert className={cn('r2a-rise px-4 py-3.5', paused ? 'border-pause/40 bg-pause-soft text-pause' : 'border-queue/30 bg-queue-soft text-queue')} data-testid="job-queued-alert">
@@ -38,8 +37,6 @@ function QueuedAlert({ job, onOpenQueue }) {
 export default function JobView({ jobId, onBack, backLabel, onOpenJob, onOpenQueue, onQueueChanged, banner }) {
   const isDesktop = useMediaQuery('(min-width: 1024px)')
   const { job, error, refresh, restartPolling } = useJob(jobId)
-  const [busy, setBusy] = useState(false)
-  const [downloading, setDownloading] = useState(false)
   const [tab, setTab] = useState('artifacts')
   const [selectedPath, setSelectedPath] = useState(null)
   const running = job?.status === 'running'
@@ -56,55 +53,7 @@ export default function JobView({ jobId, onBack, backLabel, onOpenJob, onOpenQue
     }
   }, [job, running, selectedPath])
 
-  const act = async (fn) => {
-    setBusy(true)
-    try { await fn() } finally { setBusy(false); onQueueChanged?.() }
-  }
-
-  const handleStop = () => act(async () => {
-    try {
-      const res = await stopJob(job.id)
-      toast(`Job stopped${res.stopped_step ? ` at step ${res.stopped_step}` : ''}`, { description: `${res.steps_done} of ${job.step_total} steps finished. Resume or Restart when ready.` })
-    } catch (err) {
-      toast.error('Could not stop job', { description: err.message })
-    } finally { refresh() }
-  })
-
-  const handleResume = (overrides) => act(async () => {
-    try {
-      const res = await resumeJob(job.id, overrides)
-      toast.success(res.status === 'running' ? `Resumed from step ${res.resumed_from_step}` : `Resume queued at position ${res.queue_position}`,
-        { description: 'Earlier steps are replayed as conversation history.' })
-      restartPolling()
-    } catch (err) {
-      toast.error('Could not resume job', { description: err.message })
-    }
-  })
-
-  const handleRestart = (overrides) => act(async () => {
-    try {
-      const res = await restartJob(job.id, overrides)
-      toast.success(res.status === 'running' ? 'Restarted as a new job' : `Restart queued at position ${res.queue_position}`,
-        { description: `New job ${res.id.slice(0, 8)} runs all ${job.step_total} steps from the beginning.` })
-      onOpenJob?.(res.id, res.status)
-    } catch (err) {
-      toast.error('Could not restart job', { description: err.message })
-    }
-  })
-
-  const handleDownload = useCallback(async () => {
-    if (!job) return
-    setDownloading(true)
-    try {
-      const res = await downloadZip(job.id)
-      toast.success('ZIP downloaded', { description: `${res.filename} (${Math.max(1, Math.round(res.size / 1024))} KB) - skipped paths are listed in the Log` })
-    } catch (err) {
-      toast.error('ZIP failed', { description: err.message })
-    } finally {
-      setDownloading(false)
-      refresh()
-    }
-  }, [job, refresh])
+  const actions = useJobActions(job, { refresh, restartPolling, onOpenJob, onQueueChanged })
 
   if (!job) {
     return (
@@ -136,12 +85,12 @@ export default function JobView({ jobId, onBack, backLabel, onOpenJob, onOpenQue
         </div>
         <Button
           size="sm"
-          onClick={handleDownload}
-          disabled={!canDownload || downloading}
+          onClick={actions.download}
+          disabled={!canDownload || actions.downloading}
           data-testid="download-zip-button"
           className={cn('hover:-translate-y-px', job.status === 'done' && 'r2a-pulse bg-teal text-white hover:bg-teal/90')}
         >
-          <Download /> {downloading ? 'Packing...' : 'Download ZIP'}
+          <Download /> {actions.downloading ? 'Packing...' : 'Download ZIP'}
         </Button>
       </div>
 
@@ -155,9 +104,9 @@ export default function JobView({ jobId, onBack, backLabel, onOpenJob, onOpenQue
         <span className="shrink-0 text-xs text-muted-foreground">{formatDateTime(job.created_at)}</span>
       </div>
 
-      <JobControls job={job} busy={busy} onStop={handleStop} onResume={handleResume} onRestart={handleRestart} />
+      <JobControls job={job} busy={actions.busy} onStop={actions.stop} onResume={actions.resume} onRestart={actions.restart} />
       {(job.status === 'queued' || job.status === 'paused') && <QueuedAlert job={job} onOpenQueue={onOpenQueue} />}
-      <JobAlerts job={job} onDownload={handleDownload} />
+      <JobAlerts job={job} onDownload={actions.download} />
       <Separator />
       <RoadmapChecklist steps={job.steps} job={job} />
     </div>

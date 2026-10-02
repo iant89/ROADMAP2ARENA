@@ -8,7 +8,7 @@ const LIVE = ['running', 'queued', 'paused']
 // Loads a job by id and polls GET /api/jobs/{id} every 1.5 s while it is running,
 // queued or paused (a queued job starts on its own when its turn comes).
 // Transient errors keep the last known state and retry on the next tick.
-// Toasts fire when a job observed as running in this session finishes or fails.
+// Finish/fail toasts are global (App, from the queue poll), not per view.
 export function useJob(jobId) {
   const [job, setJob] = useState(null)
   const [error, setError] = useState(null)
@@ -20,14 +20,6 @@ export function useJob(jobId) {
     if (!jobId) return null
     try {
       const next = await getJob(jobId)
-      const prev = lastStatus.current[jobId]
-      if (prev === 'running' && next.status === 'done') {
-        toast.success('Job finished', { description: `${next.steps_done}/${next.step_total} steps done - ${next.artifacts.length} files ready for ZIP` })
-      } else if (prev === 'running' && next.status === 'error') {
-        toast.error(`Step ${next.failed_step ?? '?'} failed`, { description: next.error })
-      } else if (prev === 'running' && next.status === 'stopped') {
-        toast(`Job stopped${next.stopped_step ? ` at step ${next.stopped_step}` : ''}`, { description: 'Resume continues from the first unfinished step.' })
-      }
       lastStatus.current[jobId] = next.status
       errorToastShown.current = false
       setError(null)

@@ -362,7 +362,8 @@ def test_q_list_filters_and_shapes():
     r = get("/jobs", params={"status": "done,cancelled", "limit": 200})
     assert r.status_code == 200 and all(x["status"] in ("done", "cancelled") for x in r.json())
     keys = {"job_id", "status", "created_at", "step_total", "steps_done", "title", "model", "failed_step",
-            "stopped_step", "restarted_from", "queue_position", "queued_at", "started_at", "finished_at", "paused"}
+            "stopped_step", "restarted_from", "queue_position", "queued_at", "started_at", "finished_at", "paused",
+            "cloned_from"}  # added with Clone job (feat/history-panel)
     for x in r.json():
         assert set(x) == keys, set(x) ^ keys
     assert len(get("/jobs", params={"limit": 1}).json()) == 1

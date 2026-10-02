@@ -14,7 +14,7 @@ from orchestrator import now_iso
 router = APIRouter(prefix="/api")
 
 SUMMARY_FIELDS = ("status", "title", "model", "step_total", "steps_done", "queue_position", "queued_at",
-                  "created_at", "started_at", "restarted_from")
+                  "created_at", "started_at", "restarted_from", "cloned_from")
 
 
 def summary(job: dict) -> dict:

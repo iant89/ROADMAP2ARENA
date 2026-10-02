@@ -35,7 +35,7 @@ function isHttpUrl(value) {
 const inputCls = 'bg-card h-9'
 
 // Create job form. Submitting enqueues the job; it starts at once when nothing is running.
-export default function StartForm({ form, onChange, stepCount, onSubmit, onLoadSample, submitting, queueInfo, settings, onOpenSettings }) {
+export default function StartForm({ form, onChange, stepCount, onSubmit, onLoadSample, submitting, queueInfo, settings, onOpenSettings, submitLabel = 'Add to queue' }) {
   // Inline errors appear once a field has been edited (avoids a flash before config defaults load).
   const [touched, setTouched] = useState({})
   const set = (key) => (e) => {
@@ -94,17 +94,19 @@ export default function StartForm({ form, onChange, stepCount, onSubmit, onLoadS
       </Field>
       <div className="flex flex-wrap items-center gap-3">
         <Button size="lg" onClick={onSubmit} disabled={disabled} data-testid="start-job-button" className="px-4 hover:-translate-y-px">
-          <PlusCircle /> {submitting ? 'Adding...' : 'Add to queue'}
+          <PlusCircle /> {submitting ? 'Adding...' : submitLabel}
         </Button>
-        <Button size="lg" variant="outline" onClick={onLoadSample} data-testid="load-sample-button" className="px-3 hover:-translate-y-px">
-          <Sparkles /> Load sample roadmap
-        </Button>
+        {onLoadSample && (
+          <Button size="lg" variant="outline" onClick={onLoadSample} data-testid="load-sample-button" className="px-3 hover:-translate-y-px">
+            <Sparkles /> Load sample roadmap
+          </Button>
+        )}
         <span className="text-xs text-muted-foreground" data-testid="queue-hint">{queueHint}</span>
       </div>
       {settings && (
         <p className="text-xs text-muted-foreground" data-testid="run-settings-hint">
           Runs use a {settings.step_delay_seconds}s pause between steps and a {settings.request_timeout_seconds}s request timeout
-          {' '}(<button type="button" className="font-medium text-foreground underline underline-offset-2" onClick={onOpenSettings}>change in Settings</button>).
+          {onOpenSettings ? <>{' '}(<button type="button" className="font-medium text-foreground underline underline-offset-2" onClick={onOpenSettings}>change in Settings</button>).</> : ' (set in Settings).'}
         </p>
       )}
     </div>

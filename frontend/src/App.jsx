@@ -12,7 +12,7 @@ import QueueTab from '@/components/r2a/QueueTab'
 import CurrentJobTab from '@/components/r2a/CurrentJobTab'
 import HistoryTab from '@/components/r2a/HistoryTab'
 import SettingsTab from '@/components/r2a/SettingsTab'
-import { backendUrl, getSettings } from '@/lib/api'
+import { backendUrl, getJob, getSettings } from '@/lib/api'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useQueue } from '@/hooks/useQueue'
 import { useUrlState } from '@/hooks/useUrlState'
@@ -34,7 +34,7 @@ export default function App() {
   const [settingsError, setSettingsError] = useState(null)
   const [settingsAttempt, setSettingsAttempt] = useState(0)
   const [parseError, setParseError] = useState(null)
-  const [lastRunId, setLastRunId] = useState(null)
+  const [finishedKey, setFinishedKey] = useState(0)
   const prevRunning = useRef(undefined)
   const runningId = queue?.running?.job_id ?? null
 
@@ -52,12 +52,19 @@ export default function App() {
     return () => { alive = false }
   }, [settingsAttempt])
 
-  // Remember the last running job (Current job keeps showing it after it ends) and
-  // announce when the scheduler starts the next job from the queue.
+  // Global notifications from the queue poll: the running job ended (finished/failed)
+  // and the scheduler started the next job. Also refreshes the history list.
   useEffect(() => {
     if (!queue) return
-    if (runningId) setLastRunId(runningId)
-    if (prevRunning.current !== undefined && runningId && prevRunning.current !== runningId) {
+    const prev = prevRunning.current
+    if (prev && prev !== runningId) {
+      setFinishedKey((k) => k + 1)
+      getJob(prev).then((j) => {
+        if (j.status === 'done') toast.success(`Job finished: ${j.title}`, { description: `${j.steps_done}/${j.step_total} steps done - ${j.artifacts.length} files ready for ZIP` })
+        else if (j.status === 'error') toast.error(`Step ${j.failed_step ?? '?'} failed: ${j.title}`, { description: j.error })
+      }).catch(() => {})
+    }
+    if (prev !== undefined && runningId && prev !== runningId) {
       toast(`Started: ${queue.running.title}`, { description: `${queue.running.step_total} steps with ${queue.running.model}` })
     }
     prevRunning.current = runningId
@@ -76,7 +83,6 @@ export default function App() {
     refreshQueue()
     if (res.status === 'running') {
       toast.success('Job started', { description: `${stepCount} steps for ${form.model}` })
-      setLastRunId(res.id)
       navigate('current')
     } else {
       toast.success(`Added to the queue at position ${res.queue_position}`, {
@@ -91,6 +97,13 @@ export default function App() {
     if (status === 'running') navigate('current')
     else navigate('history', id)
   }, [navigate, refreshQueue])
+
+  const handleCloned = (res) => {
+    refreshQueue()
+    setFinishedKey((k) => k + 1)
+    if (res.status === 'running') navigate('current')
+    else navigate('history', res.id)
+  }
 
   const onParseError = useCallback((msg) => setParseError(msg), [])
   const queueCount = queue?.count ?? 0
@@ -133,14 +146,13 @@ export default function App() {
               )}
             </TabsContent>
             <TabsContent value="current" className={contentCls}>
-              <CurrentJobTab queue={queue} lastRunId={lastRunId} onOpenJob={openJob} onOpenQueue={() => navigate('queue')}
+              <CurrentJobTab queue={queue} onOpenJob={openJob} onOpenQueue={() => navigate('queue')}
                 onCreate={() => navigate('create')} onQueueChanged={refreshQueue} />
             </TabsContent>
             <TabsContent value="history" className={contentCls}>
-              {historyJobId ? (
-                <HistoryTab jobId={historyJobId} onClose={() => navigate('history')} onOpenJob={openJob}
-                  onOpenQueue={() => navigate('queue')} onQueueChanged={refreshQueue} />
-              ) : scroll(<HistoryTab onOpen={(id) => navigate('history', id)} refreshKey={lastRunId} />)}
+              <HistoryTab jobId={historyJobId} onOpen={(id) => navigate('history', id)} onOpenJob={openJob}
+                onOpenQueue={() => navigate('queue')} onQueueChanged={refreshQueue} refreshKey={finishedKey}
+                isDesktop={isDesktop} queue={queue} settings={settings} onCloned={handleCloned} />
             </TabsContent>
             <TabsContent value="settings" className={contentCls}>
               {scroll(<SettingsTab onSaved={handleSettingsSaved} />)}

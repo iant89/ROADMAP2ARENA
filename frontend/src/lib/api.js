@@ -110,6 +110,7 @@ function toJobView(dto) {
     failed_step: dto.failed_step,
     stopped_step: dto.stopped_step ?? null,
     restarted_from: dto.restarted_from ?? null,
+    cloned_from: dto.cloned_from ?? null,
     queue_position: dto.queue_position ?? null,
     queued_at: dto.queued_at ?? null,
     started_at: dto.started_at ?? null,
@@ -136,8 +137,11 @@ export async function parseRoadmap(markdown) {
 }
 
 // Enqueues a job. Resolves to { id, status: 'running'|'queued', queue_position }.
-export async function startJob({ arena_url, model, project_context, roadmap_md }) {
-  const res = await request('/jobs', { method: 'POST', body: { arena_url, model, project_context, roadmap_md } })
+// cloned_from: source job id when submitted from the "Clone job" form.
+export async function startJob({ arena_url, model, project_context, roadmap_md, cloned_from }) {
+  const body = { arena_url, model, project_context, roadmap_md }
+  if (cloned_from) body.cloned_from = cloned_from
+  const res = await request('/jobs', { method: 'POST', body })
   return { id: res.job_id, status: res.status, queue_position: res.queue_position }
 }
 
@@ -158,6 +162,7 @@ export async function listJobs({ status, limit } = {}) {
     finished_at: j.finished_at ?? null,
     started_at: j.started_at ?? null,
     restarted_from: j.restarted_from ?? null,
+    cloned_from: j.cloned_from ?? null,
     title: j.title || 'Untitled roadmap',
     model: j.model,
     steps_done: j.steps_done,
@@ -237,11 +242,10 @@ function filenameFrom(res, fallback) {
   return m ? decodeURIComponent(m[1]) : fallback
 }
 
-// Downloads the job ZIP built by the backend and saves it in the browser.
-export async function downloadZip(jobId) {
-  const res = await request(`/jobs/${encodeURIComponent(jobId)}/download`, { raw: true })
+// Saves a backend attachment response in the browser. Resolves to { filename, size }.
+async function saveResponse(res, fallback) {
   const blob = await res.blob()
-  const filename = filenameFrom(res, `roadmap2arena-${jobId}.zip`)
+  const filename = filenameFrom(res, fallback)
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -251,4 +255,37 @@ export async function downloadZip(jobId) {
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
   return { filename, size: blob.size }
+}
+
+// Downloads the job ZIP built by the backend and saves it in the browser.
+export async function downloadZip(jobId) {
+  const res = await request(`/jobs/${encodeURIComponent(jobId)}/download`, { raw: true })
+  return saveResponse(res, `roadmap2arena-${jobId}.zip`)
+}
+
+// ---------------------------------------------------------------- history detail
+// { job_id, title, status, model, arena_url, project_context, created_at, finished_at,
+//   step_total, steps_done, turns: [{ step_index, step_title, status, prompt, response, error, artifact_paths }] }
+export async function getTranscript(jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/transcript`)
+}
+
+// Saves the standalone transcript HTML export.
+export async function downloadTranscriptHtml(jobId) {
+  const res = await request(`/jobs/${encodeURIComponent(jobId)}/transcript.html`, { raw: true })
+  return saveResponse(res, `roadmap2arena-${jobId.slice(0, 8)}-transcript.html`)
+}
+
+// Saves one artifact (latest version, or the version from `step`).
+export async function downloadFile(jobId, path, step) {
+  const qs = new URLSearchParams({ path })
+  if (step) qs.set('step', String(step))
+  const res = await request(`/jobs/${encodeURIComponent(jobId)}/files/download?${qs}`, { raw: true })
+  const base = path.replace(/\\/g, '/').split('/').filter(Boolean).pop() || 'file.txt'
+  return saveResponse(res, base)
+}
+
+// { source_job_id, title, arena_url, model, project_context, roadmap_md, step_total }
+export async function getCloneSource(jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/clone-source`)
 }

@@ -190,7 +190,8 @@ def test_happy_job_lifecycle():
     keys = {"job_id", "status", "error", "failed_step", "title", "created_at", "finished_at", "arena_url", "model",
             "project_context", "roadmap_md", "step_total", "steps_done", "steps", "log",
             "stopped_step", "restarted_from",  # added with job controls (stop/restart/resume)
-            "queue_position", "queued_at", "started_at"}  # added with the job queue
+            "queue_position", "queued_at", "started_at",  # added with the job queue
+            "cloned_from"}  # added with Clone job (feat/history-panel)
     assert set(j) == keys, set(j) ^ keys
     assert j["status"] == "done" and j["error"] is None and j["failed_step"] is None
     assert j["step_total"] == 3 and j["steps_done"] == 3
@@ -277,7 +278,8 @@ def test_list_jobs():
     assert isinstance(d, list) and 1 <= len(d) <= 20
     keys = {"job_id", "status", "created_at", "step_total", "steps_done", "title", "model", "failed_step",
             "stopped_step",  # stopped_step added with job controls
-            "restarted_from", "queue_position", "queued_at", "started_at", "finished_at", "paused"}  # job queue
+            "restarted_from", "queue_position", "queued_at", "started_at", "finished_at", "paused",  # job queue
+            "cloned_from"}  # Clone job
     for j in d:
         assert set(j) == keys, set(j) ^ keys
         assert ISO_Z.match(j["created_at"])
