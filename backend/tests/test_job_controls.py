@@ -19,7 +19,7 @@ import uuid
 import httpx
 
 BASE = os.environ.get("TEST_BASE_URL", "http://127.0.0.1:8001").rstrip("/") + "/api"
-STUB = "http://127.0.0.1:9090"
+STUB = os.environ.get("TEST_STUB_URL", "http://127.0.0.1:9090")
 SUFFIX = secrets.token_hex(3)
 CREATED: list[str] = []
 S: dict = {}
@@ -397,11 +397,9 @@ def test_zz_cleanup():
         if job(jid)["status"] == "running":
             c.post(f"{BASE}/jobs/{jid}/stop")
         wait(jid)
-    from pymongo import MongoClient
-    env = dict(l.strip().split("=", 1) for l in open("/app/backend/.env") if "=" in l and not l.startswith("#"))
-    db = MongoClient(env["MONGO_URL"], serverSelectionTimeoutMS=5000)[env["DB_NAME"]]
-    db.steps.delete_many({"job_id": {"$in": CREATED}})
-    db.jobs.delete_many({"id": {"$in": CREATED}})
+    # Hard delete through the API (DELETE /api/jobs/{id}, PR #6): works against any backend/DB.
+    for jid in CREATED:
+        c.delete(f"{BASE}/jobs/{jid}")
     for jid in CREATED:
         assert c.get(f"{BASE}/jobs/{jid}").status_code == 404
 

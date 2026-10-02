@@ -36,6 +36,10 @@ FastAPI's `{"detail": "..."}` shape.
 | GET | `/api/jobs/{id}/files/download?path=<p>&step=<n>` | `text/plain; charset=utf-8` attachment (file name = basename); latest version, or the version from step n | 404 job/file/version; 422 missing path, step outside 1..100000 |
 | GET | `/api/jobs/{id}/clone-source` | `{source_job_id,title,arena_url,model,project_context,roadmap_md,step_total}` for the prefilled Clone form | 404 |
 | GET | `/api/jobs/{id}/download` | `application/zip`, latest version per path | 404 unknown job; 409 no artifacts |
+| GET | `/api/jobs/{id}/git?limit=1..500` | `{job_id, project_id, job_status, exists, can_init, repo_id, owner:{type,id}, path, default_branch, head, commit_count, uncommitted_steps, commits:[{sha, short_sha, message, step_index, author_name, author_email, date, files_changed, insertions, deletions}], remotes}` newest first; `exists:false` (no repo yet) has `commits:[]` | 404 job, 422 limit |
+| POST | `/api/jobs/{id}/git/init` | create the repo now and commit every done step without a commit (older jobs); same shape + `committed_steps:[N]`; idempotent | 404, 500 git error |
+| GET | `/api/jobs/{id}/git/commits/{sha}` (4-40 hex) | `{sha, short_sha, subject, message, parents, step_index, author_name, author_email, date, files:[{path, status added/modified/deleted/renamed, old_path, additions, deletions}], patch (max 400k chars), patch_truncated}` | 422 bad sha, 404 job/repo/commit |
+| GET | `/api/jobs/{id}/git/download?format=zip\|bundle` | zip = working tree + `.git` in `roadmap2arena-<id8>/` (`roadmap2arena-<id8>-repo.zip`); bundle = `git bundle --all` (`roadmap2arena-<id8>.bundle`, `git clone file.bundle`) | 404 job/no repo, 409 no commits, 422 format |
 | GET | `/api/notifications?limit=1..200&unread=bool` | `{items:[{id,event,job_id,title,status,step,message,url,created_at,read,deliveries}], unread_count, total}` newest first (default limit 50) | 422 bad limit/unread |
 | POST | `/api/notifications/{id}/read` | `{id, read:true, unread_count}` | 404 |
 | POST | `/api/notifications/read-all` | `{updated, unread_count:0}` | - |
@@ -98,6 +102,32 @@ UI labels: done = "Completed", error = "Failed", queued = "Queued" (not started 
 - Startup recovery still turns running jobs into error "interrupted by server
   restart"; such jobs are resumable.
 Log levels: `info|ok|warn|error`; the job keeps the last 500 entries.
+
+### Git history (backend/git_cli.py, repos.py, git_integration.py)
+
+- Every job has its own local repo at `<R2A_DATA_DIR>/repos/<job_id>` (default data dir
+  `backend/data`, gitignored), branch `main`, created when the job's first run starts.
+- After each completed step the step's artifacts are written into the working tree (files
+  accumulate across steps, latest version wins, same as the ZIP) and committed as
+  `Step N: <title>` with author and committer `ROADMAP2ARENA <roadmap2arena@localhost>`. The body
+  holds trailers `R2A-Job: <id>` and `R2A-Step: N`. A step without named files gives an empty commit.
+  The sha is stored on the step (`commit_sha`, also in GET /api/jobs/{id} steps).
+- Paths are normalised like the ZIP (leading `/` and `./` dropped); paths with `..` or a `.git`
+  segment, paths through symlinks and file/directory clashes are skipped and logged
+  (`Git: skipped "<path>" - <reason>`).
+- Resume continues the same repo (done steps keep their commits). Restart and clone are new jobs
+  and get a new repo. Every run first commits done steps that have no commit yet (sync).
+  Deleting a job deletes its repo (directory + `repos` document).
+- Git failures are logged (`Git: commit failed - ...`, warn) and never fail the job.
+- git runs via subprocess with argument lists (no shell), no system/global config, hooks off,
+  no prompts, `protocol.ext` disabled.
+- Data model (ready for projects): `repos` collection
+  `{id, owner:{type:"job"|"project", id}, kind:"local", path, default_branch, head, commit_count,
+  remotes:[...], created_at, updated_at}`; jobs carry `repo_id` and `project_id` (null = standalone).
+  `repos.snapshot(repo, ref="HEAD", include, exclude, budget_bytes, max_file_bytes)` returns the
+  tree and text file contents at a ref within a byte budget (for future project context).
+- UI: History detail > Git tab: commit list, commit detail (files, colored diff),
+  Download repo (zip incl. .git) and Bundle; "Create repository" for jobs without a repo.
 
 ### Notifications (backend/notifier.py, notify_settings.py, notification_routes.py)
 

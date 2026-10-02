@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Copy, Download, FileDown, FolderTree, ListChecks, MessagesSquare, ScrollText, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { GitCommitIcon } from '@primer/octicons-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -10,6 +11,7 @@ import { deleteJob } from '@/lib/api'
 import ArtifactsPanel from './ArtifactsPanel'
 import ConfirmButton from './ConfirmButton'
 import FullTranscript from './FullTranscript'
+import GitPanel from './GitPanel'
 import JobAlerts from './JobAlerts'
 import JobControls from './JobControls'
 import LogPanel from './LogPanel'
@@ -28,7 +30,7 @@ function JobLink({ label, id, onOpen }) {
 }
 
 // Job history detail: header with actions (Clone, transcript export, ZIP, Resume/Restart/Stop)
-// and Transcript | Files | Steps | Log tabs.
+// and Transcript | Files | Steps | Git | Log tabs.
 export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueChanged, onClone, onDeleted }) {
   const { job, error, refresh, restartPolling } = useJob(jobId)
   const actions = useJobActions(job, { refresh, restartPolling, onOpenJob, onQueueChanged })
@@ -125,10 +127,11 @@ export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueCh
 
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0">
         <div className="min-w-0 overflow-x-auto border-b border-border px-5 py-2.5 lg:px-7">
-          <TabsList className="grid h-9 w-full grid-cols-4 bg-secondary sm:inline-flex sm:w-fit">
+          <TabsList className="grid h-9 w-full grid-cols-5 bg-secondary sm:inline-flex sm:w-fit">
             <TabsTrigger value="transcript" data-testid="detail-tab-transcript" className="px-2 text-xs sm:px-3 sm:text-sm"><MessagesSquare /> Transcript <Count n={turns} /></TabsTrigger>
             <TabsTrigger value="files" data-testid="detail-tab-files" className="px-2 text-xs sm:px-3 sm:text-sm"><FolderTree /> Files <Count n={job.artifacts.length} /></TabsTrigger>
             <TabsTrigger value="steps" data-testid="detail-tab-steps" className="px-2 text-xs sm:px-3 sm:text-sm"><ListChecks /> Steps <Count n={job.step_total} /></TabsTrigger>
+            <TabsTrigger value="git" data-testid="detail-tab-git" className="px-2 text-xs sm:px-3 sm:text-sm"><GitCommitIcon size={16} /> Git <Count n={job.steps.filter((s) => s.commit_sha).length} /></TabsTrigger>
             <TabsTrigger value="log" data-testid="detail-tab-log" className="px-2 text-xs sm:px-3 sm:text-sm"><ScrollText /> Log <Count n={job.log.length} /></TabsTrigger>
           </TabsList>
         </div>
@@ -140,6 +143,9 @@ export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueCh
         </TabsContent>
         <TabsContent value="steps" className="min-h-0 flex-1 overflow-y-auto p-5 lg:p-7">
           <RoadmapChecklist steps={job.steps} job={job} />
+        </TabsContent>
+        <TabsContent value="git" className="min-h-[420px] flex-1">
+          <GitPanel key={job.id} job={job} version={`${job.status}:${job.steps.filter((s) => s.commit_sha).length}`} />
         </TabsContent>
         <TabsContent value="log" className="min-h-[420px] flex-1">
           <LogPanel job={job} />

@@ -41,6 +41,10 @@ on_job_end: Callable[[], None] | None = None
 # Async callbacks (db, job_id, status) run after a job reached done / error / stopped
 # (e.g. notifications). Each runs in its own task; failures are logged and never affect the job.
 on_job_finished: list[Callable[[object, str, str], Awaitable[None]]] = []
+# Awaited hooks (inline, in order, shielded from a stop) - e.g. the per-job git history.
+# They must not raise; exceptions are logged and ignored.
+on_run_start: list[Callable[[object, str], Awaitable[None]]] = []          # (db, job_id)
+on_step_done: list[Callable[[object, str, int], Awaitable[None]]] = []     # (db, job_id, step_index)
 _finish_tasks: set[asyncio.Task] = set()
 
 
@@ -60,6 +64,17 @@ def emit_finished(db, job_id: str, status: str) -> None:
         t = asyncio.create_task(_run(), name=f"finished-{job_id}")
         _finish_tasks.add(t)
         t.add_done_callback(_finish_tasks.discard)
+
+
+async def _run_hooks(hooks: list, *args) -> None:
+    for cb in hooks:
+        try:
+            # shield: a stop request must not interrupt e.g. a git commit half-way
+            await asyncio.shield(cb(*args))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - hooks never break a job
+            logger.exception("orchestrator hook %s failed", getattr(cb, "__name__", cb))
 
 
 def now_iso() -> str:
@@ -222,6 +237,7 @@ async def run_job(db, job_id: str) -> None:
         await append_log(db, job_id, "info", f"Job started: {len(steps)} steps, model {job['model']}, arena2api {job['arena_url']}, "
                                              f"step delay {delay:g}s, timeout {timeout:g}s")
     try:
+        await _run_hooks(on_run_start, db, job_id)
         for step in todo:
             idx = step["index"]
             prompt = build_prompt(job.get("project_context", ""), steps, idx, sorted(files))
@@ -274,6 +290,8 @@ async def run_job(db, job_id: str) -> None:
             if extras:
                 note += f" ({'; '.join(extras)})"
             await append_log(db, job_id, "ok", f"Step {idx} done - {note}")
+            if res.modified_count:
+                await _run_hooks(on_step_done, db, job_id, idx)
             if idx < len(steps) and delay > 0:
                 await asyncio.sleep(delay)
 

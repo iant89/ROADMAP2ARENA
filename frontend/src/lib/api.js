@@ -357,3 +357,26 @@ export async function testWebhook(overrides) {
 export async function testEmail(overrides) {
   return request('/notifications/test/email', { method: 'POST', body: overrides })
 }
+
+// ---------------------------------------------------------------- git history (per job)
+// { exists, can_init, repo_id, owner, default_branch, head, commit_count, uncommitted_steps,
+//   commits: [{ sha, short_sha, message, step_index, author_name, date, files_changed, insertions, deletions }], remotes }
+export async function getJobGit(jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/git`)
+}
+
+// Creates the repo now and commits the done steps (for jobs from before git history).
+export async function initJobGit(jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/git/init`, { method: 'POST' })
+}
+
+// { sha, short_sha, subject, message, parents, files: [{ path, status, additions, deletions }], patch, patch_truncated }
+export async function getJobCommit(jobId, sha) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/git/commits/${encodeURIComponent(sha)}`)
+}
+
+// format: 'zip' (working tree + .git) or 'bundle' (git bundle, clone with `git clone file.bundle`)
+export async function downloadJobRepo(jobId, format = 'zip') {
+  const res = await request(`/jobs/${encodeURIComponent(jobId)}/git/download?format=${format}`, { raw: true })
+  return saveResponse(res, `roadmap2arena-${jobId.slice(0, 8)}.${format === 'bundle' ? 'bundle' : 'zip'}`)
+}

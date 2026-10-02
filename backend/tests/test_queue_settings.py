@@ -23,7 +23,7 @@ import uuid
 import httpx
 
 BASE = os.environ.get("TEST_BASE_URL", "http://127.0.0.1:8001").rstrip("/") + "/api"
-STUB = "http://127.0.0.1:9090"
+STUB = os.environ.get("TEST_STUB_URL", "http://127.0.0.1:9090")
 SUFFIX = secrets.token_hex(3)
 CREATED: list[str] = []
 S: dict = {}
@@ -361,7 +361,7 @@ def turn_of_step(jid, i):
 def test_q_list_filters_and_shapes():
     r = get("/jobs", params={"status": "done,cancelled", "limit": 200})
     assert r.status_code == 200 and all(x["status"] in ("done", "cancelled") for x in r.json())
-    keys = {"job_id", "status", "created_at", "step_total", "steps_done", "title", "model", "failed_step",
+    keys = {"job_id", "project_id", "status", "created_at", "step_total", "steps_done", "title", "model", "failed_step",
             "stopped_step", "restarted_from", "queue_position", "queued_at", "started_at", "finished_at", "paused",
             "cloned_from"}  # added with Clone job (feat/history-panel)
     for x in r.json():

@@ -8,6 +8,7 @@ on 127.0.0.1:9090 (models: gpt-4o instant, stub-slow 5 s per call, stub-503 fail
 from __future__ import annotations
 
 import concurrent.futures as cf
+import os
 import sys
 import time
 
@@ -15,7 +16,7 @@ import httpx
 
 from isolated_server import IsolatedServer, run_tests
 
-STUB = "http://127.0.0.1:9090"
+STUB = os.environ.get("TEST_STUB_URL", "http://127.0.0.1:9090")
 B = ""  # set in main
 c = httpx.Client(timeout=30)
 SRV: IsolatedServer | None = None

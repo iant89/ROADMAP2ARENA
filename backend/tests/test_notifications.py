@@ -8,6 +8,7 @@ leaves 127.0.0.1. Needs the arena stand-in on 127.0.0.1:9090.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
@@ -19,7 +20,7 @@ from aiosmtpd.smtp import AuthResult
 
 from isolated_server import IsolatedServer, free_port, run_tests
 
-STUB = "http://127.0.0.1:9090"
+STUB = os.environ.get("TEST_STUB_URL", "http://127.0.0.1:9090")
 B = ""
 SRV: IsolatedServer | None = None
 c = httpx.Client(timeout=30)
