@@ -154,7 +154,9 @@ Wants=mongod.service
 [Service]
 User=${RUN_USER}
 WorkingDirectory=${APP_DIR}/backend
-ExecStart=${APP_DIR}/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8001
+# No --reload in production: nothing is watched, so job repos (R2A_DATA_DIR, default
+# ${APP_DIR}/data) can never restart the service. Keep a single worker (in-process poller/scheduler).
+ExecStart=${APP_DIR}/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8001 --workers 1
 Restart=on-failure
 RestartSec=3
 

@@ -1,6 +1,8 @@
 """ROADMAP2ARENA backend: FastAPI app, all routes under /api."""
 from __future__ import annotations
 
+import asyncio
+
 import io
 import logging
 import uuid
@@ -57,6 +59,10 @@ async def lifespan(_: FastAPI):
     await db.notifications.create_index([("id", ASCENDING)], unique=True)
     await db.notifications.create_index([("created_at", DESCENDING)])
     await app_settings.seed(db, now_iso())
+    try:  # F-006: job repos moved out of backend/ (uvicorn --reload watch) to R2A_DATA_DIR
+        await asyncio.to_thread(repos.migrate_legacy_data)
+    except Exception:  # noqa: BLE001 - never block startup; repos that did not move are reported
+        logging.getLogger("roadmap2arena").exception("Data migration from backend/data failed")
     await repos.ensure_indexes(db)
     await github_integration.ensure_indexes(db)
     if notifier.on_job_finished not in orchestrator.on_job_finished:

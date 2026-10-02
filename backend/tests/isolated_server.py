@@ -45,7 +45,9 @@ class IsolatedServer:
 
     def __enter__(self) -> str:
         env = {**os.environ, "DB_NAME": self.db_name, "ARENA_STEP_DELAY_SECONDS": str(self.step_delay),
-               "PYTHONDONTWRITEBYTECODE": "1", **self.extra_env}
+               "PYTHONDONTWRITEBYTECODE": "1",
+               # throwaway data dirs must never pull in the checkout's legacy backend/data/repos
+               "R2A_MIGRATE_LEGACY_DATA": "0", **self.extra_env}
         self._log = open(self.log_path, "w")
         self.proc = subprocess.Popen([UVICORN, "server:app", "--host", "127.0.0.1", "--port", str(self.port)],
                                      cwd=BACKEND_DIR, env=env, stdout=self._log, stderr=subprocess.STDOUT)

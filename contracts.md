@@ -119,7 +119,11 @@ Log levels: `info|ok|warn|error`; the job keeps the last 500 entries.
 ### Git history (backend/git_cli.py, repos.py, git_integration.py)
 
 - Every job has its own local repo at `<R2A_DATA_DIR>/repos/<job_id>` (default data dir
-  `backend/data`, gitignored), branch `main`, created when the job's first run starts.
+  `<repo root>/data`, gitignored - deliberately OUTSIDE `backend/` so uvicorn --reload never sees
+  job files, F-006), branch `main`, created when the job's first run starts. On startup repos
+  left in the old `backend/data/repos` are moved there (only when the new path does not exist;
+  `R2A_MIGRATE_LEGACY_DATA=0` disables it, test servers do). Dev reload watches only `backend/`
+  minus tests/, data/ and git files: `deploy/supervisor/backend.conf`, `run.sh` (needs watchfiles).
 - After each completed step the step's artifacts are written into the working tree (files
   accumulate across steps, latest version wins, same as the ZIP) and committed as
   `Step N: <title>` with author and committer `ROADMAP2ARENA <roadmap2arena@localhost>`. The body
