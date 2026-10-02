@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Activity, ArrowDown, ArrowRight, ArrowUp, ListOrdered, Pause, Play, PlusCircle, XCircle } from 'lucide-react'
+import { Activity, ArrowDown, ArrowRight, ArrowUp, ListOrdered, Pause, Play, PlusCircle, Undo2, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -76,8 +76,8 @@ function QueueRow({ job, first, last, busy, onAction, onOpen }) {
       {confirm ? (
         <div className="flex items-center gap-1.5" data-testid="queue-remove-confirm">
           <span className="text-xs font-medium text-coral">Cancel this job? It stays in history.</span>
-          <Button size="sm" variant="outline" onClick={() => { setConfirm(false); onAction('remove') }} disabled={busy} data-testid="queue-remove-yes" className="border-coral/40 text-coral hover:bg-coral-soft hover:text-coral">Cancel job</Button>
-          <Button size="sm" variant="ghost" onClick={() => setConfirm(false)} data-testid="queue-remove-no">Keep</Button>
+          <Button size="sm" variant="outline" onClick={() => { setConfirm(false); onAction('remove') }} disabled={busy} data-testid="queue-remove-yes" className="border-coral/40 text-coral hover:bg-coral-soft hover:text-coral"><XCircle /> Cancel job</Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirm(false)} data-testid="queue-remove-no"><Undo2 /> Keep</Button>
         </div>
       ) : (
         <div className="flex items-center gap-0.5">

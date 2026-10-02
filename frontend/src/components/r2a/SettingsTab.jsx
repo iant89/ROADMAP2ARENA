@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { CircleAlert, RotateCcw, Save, Settings } from 'lucide-react'
+import { CircleAlert, RotateCcw, Save, Settings, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -146,8 +146,8 @@ export default function SettingsTab({ onSaved }) {
           {confirmReset ? (
             <span className="flex items-center gap-2" data-testid="settings-reset-confirm">
               <span className="text-xs font-medium">Replace all four values with the .env defaults?</span>
-              <Button size="sm" variant="outline" onClick={handleReset} disabled={busy} data-testid="settings-reset-yes">Reset</Button>
-              <Button size="sm" variant="ghost" onClick={() => setConfirmReset(false)}>Cancel</Button>
+              <Button size="sm" variant="outline" onClick={handleReset} disabled={busy} data-testid="settings-reset-yes"><RotateCcw /> Reset</Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmReset(false)}><X /> Cancel</Button>
             </span>
           ) : (
             <Button variant="outline" onClick={() => setConfirmReset(true)} disabled={busy} data-testid="settings-reset"><RotateCcw /> Reset to .env defaults</Button>

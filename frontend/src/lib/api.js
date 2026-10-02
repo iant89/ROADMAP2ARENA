@@ -375,6 +375,13 @@ export async function getJobCommit(jobId, sha) {
   return request(`/jobs/${encodeURIComponent(jobId)}/git/commits/${encodeURIComponent(sha)}`)
 }
 
+// Structured diff base..head for the DiffViewer (base omitted = head's parent). Step outputs are
+// compared by passing two steps' commit SHAs.
+export async function compareJobCommits(jobId, head, base) {
+  const q = new URLSearchParams({ head, ...(base ? { base } : {}) })
+  return request(`/jobs/${encodeURIComponent(jobId)}/git/compare?${q}`)
+}
+
 // format: 'zip' (working tree + .git) or 'bundle' (git bundle, clone with `git clone file.bundle`)
 export async function downloadJobRepo(jobId, format = 'zip') {
   const res = await request(`/jobs/${encodeURIComponent(jobId)}/git/download?format=${format}`, { raw: true })

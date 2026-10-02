@@ -81,7 +81,7 @@ def defaults_for(job: dict, steps: list[dict]) -> dict:
     roadmap = (job.get("roadmap_md") or "").strip()
     if roadmap:
         body += f"\n<details><summary>Roadmap</summary>\n\n{roadmap}\n\n</details>\n"
-    return {"repo_name": slug, "branch": f"r2a/{slug}", "pr_title": title, "pr_body": body[:PR_BODY_MAX]}
+    return {"repo_name": slug, "branch": f"r2a/job-{job['id'][:8]}", "pr_title": title, "pr_body": body[:PR_BODY_MAX]}
 
 
 def _allowed_hosts() -> set[str]:

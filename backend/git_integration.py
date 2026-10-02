@@ -11,7 +11,8 @@
 - Git problems are logged to the job log and never fail the job.
 
 Routes (prefix /api/jobs/{id}/git): GET "" (repo summary + commits), POST /init,
-GET /commits/{sha} (files + patch), GET /download?format=zip|bundle.
+GET /commits/{sha} (files + patch + structured diff), GET /compare?base=&head= (structured diff,
+see git_diff.py), GET /download?format=zip|bundle.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
 import git_cli
+import git_diff
 import repos
 from artifact_extractor import clean_zip_path
 from database import db as default_db
@@ -226,13 +228,14 @@ def _commit_sync(root: str, sha: str) -> dict | None:
         add, dele = stats.get(path, (None, None))
         files.append({"path": path, "status": STATUS_NAMES.get(code, code), "old_path": parts[1] if len(parts) == 3 else None,
                       "additions": add, "deletions": dele})
+    diff = git_diff.diff_sync(root, git_diff.parent_of(root, full), full)
     patch = git_cli.out(root, "show", "--format=", "--patch", "--no-color", "--no-ext-diff", "-M", full)
     truncated = len(patch) > PATCH_MAX_CHARS
     sm = STEP_SUBJECT_RE.match(body)
     return {"sha": h, "short_sha": short, "author_name": an, "author_email": ae, "date": date,
             "parents": parents.split(), "message": body.strip(), "subject": body.split("\n", 1)[0],
             "step_index": int(sm.group(1)) if sm else None, "files": files,
-            "patch": patch[:PATCH_MAX_CHARS], "patch_truncated": truncated}
+            "patch": patch[:PATCH_MAX_CHARS], "patch_truncated": truncated, "diff": diff}
 
 
 async def _job_or_404(db, job_id: str) -> dict:
@@ -296,6 +299,32 @@ async def get_commit(job_id: str, sha: str):
     if not commit:
         raise HTTPException(status_code=404, detail=f"Commit {sha} not found in this job's repository")
     return commit
+
+
+def _compare_sync(root: str, base: str | None, head: str) -> dict | None:
+    h = git_diff.resolve(root, head)
+    if not h:
+        return None
+    b = git_diff.resolve(root, base) if base else git_diff.parent_of(root, h)
+    if base and not b:
+        return None
+    return git_diff.diff_sync(root, b, h)
+
+
+@router.get("/jobs/{job_id}/git/compare")
+async def compare(job_id: str, head: str = Query(...), base: str | None = Query(None)):
+    """Structured diff base..head for the DiffViewer (base defaults to head's parent / the empty tree).
+    Compare two steps by passing their commit_sha values."""
+    await _job_or_404(default_db, job_id)
+    for name, value in (("head", head), ("base", base)):
+        if value is not None and not git_cli.SHA_RE.match(value):
+            raise HTTPException(status_code=422, detail=f"{name} must be 4-40 lowercase hex characters")
+    _, root = await _repo_or_404(default_db, job_id)
+    async with repos.lock_for(root):
+        result = await asyncio.to_thread(_compare_sync, root, base, head)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Commit not found in this job's repository")
+    return result
 
 
 def _zip_repo(root: str, prefix: str) -> bytes:

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { CircleAlert, Copy, ExternalLink, KeyRound, LockKeyhole, LogIn, Unplug, X } from 'lucide-react'
+import { CircleAlert, Copy, ExternalLink, KeyRound, LockKeyhole, LogIn, Save, Unplug, X } from 'lucide-react'
 import { CheckCircleIcon, DotFillIcon, GitPullRequestIcon, MarkGithubIcon, RepoPushIcon, SyncIcon, XCircleIcon } from '@primer/octicons-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -221,7 +221,7 @@ export default function GitHubSettings() {
                   <p className="text-xs text-muted-foreground">Needs a GitHub OAuth app with device flow enabled. Set <code>GITHUB_OAUTH_CLIENT_ID</code> in backend/.env or enter the client ID here.</p>
                   <div className="flex gap-2">
                     <Input className="h-8 bg-card font-mono text-base sm:text-[12.5px]" placeholder="Ov23li..." value={clientId} onChange={(e) => setClientId(e.target.value)} data-testid="gh-oauth-client-id" />
-                    <Button size="sm" variant="outline" disabled={!clientId.trim()} onClick={() => saveClientId(clientId.trim())} data-testid="gh-oauth-client-id-save">Save</Button>
+                    <Button size="sm" variant="outline" disabled={!clientId.trim()} onClick={() => saveClientId(clientId.trim())} data-testid="gh-oauth-client-id-save"><Save /> Save</Button>
                   </div>
                 </div>
               )

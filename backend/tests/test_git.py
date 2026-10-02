@@ -138,6 +138,62 @@ def test_commit_detail():
     assert C.get(f"{BASE}/jobs/{j}/git?limit=0").status_code == 422
 
 
+def test_structured_diff_and_compare():
+    """Commit detail carries a structured diff; /git/compare diffs two step commits (DiffViewer input)."""
+    j = STATE["done"]
+    g = C.get(f"{BASE}/jobs/{j}/git").json()
+    first, last = g["commits"][-1], g["commits"][0]
+    c = C.get(f"{BASE}/jobs/{j}/git/commits/{first['sha']}").json()
+    d = c["diff"]
+    assert d["base"] is None and d["head"] == first["sha"] and d["stats"]["files"] == len(c["files"])
+    for f in d["files"]:
+        assert f["status"] == "added" and f["patch"].startswith("diff --git") and "\n@@" in f["patch"]
+        assert f["old_content"] is None and f["new_content"] is not None and f["context_expandable"] is True
+        assert set(f) >= {"path", "old_path", "additions", "deletions", "binary", "patch_too_large"}
+    assert d["stats"]["additions"] == sum(f["additions"] for f in d["files"])
+    r = C.get(f"{BASE}/jobs/{j}/git/compare", params={"base": first["sha"], "head": last["sha"]})
+    assert r.status_code == 200, r.text
+    cmp = r.json()
+    assert cmp["base"] == first["sha"] and cmp["head"] == last["sha"]
+    total = sum(x["insertions"] for x in g["commits"][:-1])
+    assert cmp["stats"]["additions"] == total, (cmp["stats"], total)
+    mod = [f for f in cmp["files"] if f["status"] == "modified"]
+    assert all(f["old_content"] is not None and f["new_content"] is not None for f in mod)
+    # default base = parent; same commit = empty diff; short shas resolve
+    assert C.get(f"{BASE}/jobs/{j}/git/compare", params={"head": last["short_sha"]}).json()["base"] == g["commits"][1]["sha"]
+    assert C.get(f"{BASE}/jobs/{j}/git/compare", params={"head": last["sha"], "base": last["sha"]}).json()["files"] == []
+    for params, code in (({"head": "HEAD"}, 422), ({"head": last["sha"], "base": "main~1"}, 422), ({}, 422),
+                         ({"head": "0" * 40}, 404), ({"head": last["sha"], "base": "abcdef0"}, 404)):
+        assert C.get(f"{BASE}/jobs/{j}/git/compare", params=params).status_code == code, params
+    assert C.get(f"{BASE}/jobs/nope/git/compare", params={"head": last["sha"]}).status_code == 404
+
+
+def test_git_diff_unit():
+    """Renames, binary files, odd file names and size caps in git_diff.diff_sync."""
+    import git_cli
+    import git_diff
+    root = tempfile.mkdtemp(prefix="r2a-diff-")
+    git_cli.run(root, "init", "-q", "-b", "main")
+    open(os.path.join(root, "a.py"), "w").write("".join(f"x{i} = {i}\n" for i in range(60)))
+    open(os.path.join(root, "odd name\tx.txt"), "w").write("hello\n")
+    git_cli.run(root, "add", "-A"); git_cli.run(root, "commit", "-q", "-m", "one")
+    c1 = git_cli.out(root, "rev-parse", "HEAD").strip()
+    src = open(os.path.join(root, "a.py")).read().replace("x30 = 30", "x30 = 3000")
+    open(os.path.join(root, "a.py"), "w").write(src)
+    os.rename(os.path.join(root, "odd name\tx.txt"), os.path.join(root, "renamed.txt"))
+    open(os.path.join(root, "b.bin"), "wb").write(bytes(range(256)))
+    open(os.path.join(root, "big.txt"), "w").write("y\n" * 150_000)
+    git_cli.run(root, "add", "-A"); git_cli.run(root, "commit", "-q", "-m", "two")
+    c2 = git_cli.out(root, "rev-parse", "HEAD").strip()
+    d = {f["path"]: f for f in git_diff.diff_sync(root, c1, c2)["files"]}
+    assert d["a.py"]["additions"] == 1 and d["a.py"]["deletions"] == 1 and d["a.py"]["context_expandable"]
+    assert "x30 = 3000" in d["a.py"]["patch"] and "x5 = 5" in d["a.py"]["old_content"]
+    assert d["renamed.txt"]["status"] == "renamed" and d["renamed.txt"]["old_path"] == "odd name\tx.txt"
+    assert d["b.bin"]["binary"] and d["b.bin"]["patch"] is None and d["b.bin"]["new_content"] is None
+    assert d["big.txt"]["patch_too_large"] and d["big.txt"]["patch"] is None and d["big.txt"]["additions"] == 150_000
+    shutil.rmtree(root)
+
+
 def test_download_zip_and_bundle():
     j = STATE["done"]
     head = C.get(f"{BASE}/jobs/{j}/git").json()["head"]

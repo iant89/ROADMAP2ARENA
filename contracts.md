@@ -38,7 +38,8 @@ FastAPI's `{"detail": "..."}` shape.
 | GET | `/api/jobs/{id}/download` | `application/zip`, latest version per path | 404 unknown job; 409 no artifacts |
 | GET | `/api/jobs/{id}/git?limit=1..500` | `{job_id, project_id, job_status, exists, can_init, repo_id, owner:{type,id}, path, default_branch, head, commit_count, uncommitted_steps, commits:[{sha, short_sha, message, step_index, author_name, author_email, date, files_changed, insertions, deletions}], remotes}` newest first; `exists:false` (no repo yet) has `commits:[]` | 404 job, 422 limit |
 | POST | `/api/jobs/{id}/git/init` | create the repo now and commit every done step without a commit (older jobs); same shape + `committed_steps:[N]`; idempotent | 404, 500 git error |
-| GET | `/api/jobs/{id}/git/commits/{sha}` (4-40 hex) | `{sha, short_sha, subject, message, parents, step_index, author_name, author_email, date, files:[{path, status added/modified/deleted/renamed, old_path, additions, deletions}], patch (max 400k chars), patch_truncated}` | 422 bad sha, 404 job/repo/commit |
+| GET | `/api/jobs/{id}/git/commits/{sha}` (4-40 hex) | `{sha, short_sha, subject, message, parents, step_index, author_name, author_email, date, files:[{path, status added/modified/deleted/renamed, old_path, additions, deletions}], patch (max 400k chars), patch_truncated, diff}` - `diff` = structured diff (see below) | 422 bad sha, 404 job/repo/commit |
+| GET | `/api/jobs/{id}/git/compare?head=<sha>&base=<sha>` (base optional = parent of head; 4-40 hex) | structured diff object (below) for comparing two steps | 422 bad sha, 404 job/repo/commit |
 | GET | `/api/jobs/{id}/git/download?format=zip\|bundle` | zip = working tree + `.git` in `roadmap2arena-<id8>/` (`roadmap2arena-<id8>-repo.zip`); bundle = `git bundle --all` (`roadmap2arena-<id8>.bundle`, `git clone file.bundle`) | 404 job/no repo, 409 no commits, 422 format |
 | GET | `/api/github` | `{connected, auth_method: pat\|oauth\|env\|null, source: settings\|env\|null, encryption: ok\|missing\|invalid, env_token, token_error, username, name, avatar_url, html_url, scopes, token_type, connected_at, auto_push:{enabled, private}, oauth:{available, client_id, client_id_source: env\|settings\|null, pending:{user_code, verification_uri, expires_at, interval}\|null}}` - never the token | - |
 | PUT | `/api/github/token` `{token}` | validates with GitHub `GET /user` (scopes from X-OAuth-Scopes), stores it Fernet-encrypted; same shape as GET | 422 malformed, 401 rejected by GitHub, 409 no/invalid `R2A_SECRET_KEY` / OAuth connected / device flow pending / `R2A_GITHUB_TOKEN` set, 502 unreachable, 504 timeout |
@@ -48,7 +49,7 @@ FastAPI's `{"detail": "..."}` shape.
 | POST | `/api/github/oauth/poll` | `{status: pending\|slow_down\|connected\|expired\|denied, interval, github}`; calls GitHub at most once per interval | 409 nothing pending, 422 other OAuth error |
 | POST | `/api/github/oauth/cancel` | clears the pending flow; GET shape | - |
 | GET | `/api/github/repos?q=` | `{items:[{full_name, name, owner, private, default_branch, html_url, description, can_push, updated_at}], total, truncated}` (up to 300, most recently updated) | 409 not connected (or stored token undecryptable), GitHub errors per the mapping below |
-| GET | `/api/jobs/{id}/github` | `{job_id, connected, username, defaults:{repo_name, branch: r2a/<slug>, pr_title, pr_body}, last_push, watches}` | 404 |
+| GET | `/api/jobs/{id}/github` | `{job_id, connected, username, defaults:{repo_name, branch: r2a/job-<id8>, pr_title, pr_body}, last_push, watches}` | 404 |
 | POST | `/api/jobs/{id}/github/push` | body `{mode: new\|existing, repo_name, private (default true), description, repo_full_name, branch, open_pr, pr_base, pr_title, pr_body}` -> `{pushed, source, pushed_at, branch, head, commit_count, repo:{full_name, html_url, private, created}, branch_url, commit_url, pr:{number, html_url, existing, base, state}\|null, pr_error}`; emits `github_pushed` (+ `github_pr_opened` for a new PR) and upserts a watch | 404, 409 not connected / running / no commits / repo name exists / non-fast-forward branch / protected or rules, 422 validation (incl. open_pr with mode new), 401 bad token, 403 no permission / workflow scope, 404 repo, 429 rate limit (Retry-After), 502, 504 push timeout |
 | GET | `/api/github/watches` | `{items:[{job_id, full_name, branch, html_url, head_sha, pr_number, state:{pr_state, ci: none\|pending\|success\|failure, ...}, active, pushed_at, expires_at, last_error, last_polled_at}], poll_seconds, paused_for, pause_reason}` (no etags) | - |
 | POST | `/api/github/poll` | poll the active watches now: `{watches, notifications}` or `{skipped: not_connected\|rate_limited\|rate_low\|auth, resume_in?}` | - |
@@ -138,8 +139,19 @@ Log levels: `info|ok|warn|error`; the job keeps the last 500 entries.
   remotes:[...], created_at, updated_at}`; jobs carry `repo_id` and `project_id` (null = standalone).
   `repos.snapshot(repo, ref="HEAD", include, exclude, budget_bytes, max_file_bytes)` returns the
   tree and text file contents at a ref within a byte budget (for future project context).
-- UI: History detail > Git tab: commit list, commit detail (files, colored diff),
-  Download repo (zip incl. .git) and Bundle; "Create repository" for jobs without a repo.
+- Structured diff (`backend/git_diff.py`, `diff_sync(root, base, head)`): `{base, head, files:[{path,
+  old_path, status, additions, deletions, binary, patch, patch_too_large, old_content, new_content,
+  context_expandable}], truncated, stats:{files, additions, deletions}}`; old/new content lets the UI
+  expand hidden context. Caps: 300 files, 200k chars per patch / 2M total, 256 kB per content / 3 MB total.
+- UI: History detail > Git tab: commit list, commit detail rendered with the DiffViewer,
+  "Compare steps" (From/To selects -> /git/compare), Download repo (zip incl. .git) and Bundle;
+  "Create repository" for jobs without a repo.
+- DiffViewer (`frontend/src/components/r2a/DiffViewer.jsx`, lazy chunk, `@git-diff-view/react`, MIT):
+  split/unified toggle (localStorage `r2a.diffMode`, unified by default below 640px), wrap toggle,
+  file list with octicon status icons and +/- counts, collapsible file sections, expand/collapse all,
+  syntax highlighting (lowlight), word-level change highlighting, expandable context lines,
+  error boundary falling back to the raw patch.
+- Icon pass: every action button has a lucide/octicon icon; icon-only buttons carry aria-label.
 
 ### GitHub (backend/github_client.py, github_integration.py)
 

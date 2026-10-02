@@ -97,6 +97,11 @@ def wait_for(fn, timeout=15, step=0.3):
     raise AssertionError("condition never met")
 
 
+def BR():
+    """Default push branch of the first test job (r2a/job-<id8>)."""
+    return f"r2a/job-{STATE['job'][:8]}"
+
+
 def logs(job_id):
     return [l["msg"] for l in C.get(f"{BASE}/jobs/{job_id}").json()["log"]]
 
@@ -112,7 +117,7 @@ def test_not_connected_errors():
     assert r.status_code == 409 and "not connected" in r.json()["detail"]
     assert C.get(f"{BASE}/github/repos").status_code == 409
     info = C.get(f"{BASE}/jobs/{j}/github").json()
-    assert info["connected"] is False and info["defaults"]["branch"] == "r2a/push-demo-app"
+    assert info["connected"] is False and info["defaults"]["branch"] == f"r2a/job-{j[:8]}"
     assert info["defaults"]["repo_name"] == "push-demo-app" and info["defaults"]["pr_title"] == "Push Demo App"
     assert "- [x] Step 1: First step" in info["defaults"]["pr_body"] and info["last_push"] is None
 
@@ -188,20 +193,20 @@ def test_push_new_repo():
     assert r.status_code == 200, r.text
     res = r.json()
     head = C.get(f"{BASE}/jobs/{j}/git").json()["head"]
-    assert res["pushed"] and res["branch"] == "r2a/push-demo-app" and res["head"] == head
+    assert res["pushed"] and res["branch"] == BR() and res["head"] == head
     STATE["head"] = head
     assert res["repo"] == {"full_name": "r2a-tester/push-demo-app", "html_url": "https://github.com/r2a-tester/push-demo-app",
                            "private": True, "created": True}
-    assert res["branch_url"] == "https://github.com/r2a-tester/push-demo-app/tree/r2a/push-demo-app"
+    assert res["branch_url"] == f"https://github.com/r2a-tester/push-demo-app/tree/{BR()}"
     assert res["commit_url"].endswith(head) and res["pr"] is None and res["commit_count"] == 2
     b = bare("r2a-tester/push-demo-app")
-    assert git(b, "rev-parse", "refs/heads/r2a/push-demo-app").stdout.strip() == head
-    assert git(b, "log", "--format=%s", "r2a/push-demo-app").stdout.split("\n")[:2] == ["Step 2: Second step", "Step 1: First step"]
+    assert git(b, "rev-parse", f"refs/heads/{BR()}").stdout.strip() == head
+    assert git(b, "log", "--format=%s", BR()).stdout.split("\n")[:2] == ["Step 2: Second step", "Step 1: First step"]
     g = C.get(f"{BASE}/jobs/{j}/git").json()
     assert g["remotes"][0]["full_name"] == "r2a-tester/push-demo-app" and g["remotes"][0]["pushed_head"] == head
     assert "clone_url" in g["remotes"][0] and TOKEN not in str(g)
     assert C.get(f"{BASE}/jobs/{j}/github").json()["last_push"]["repo"]["full_name"] == "r2a-tester/push-demo-app"
-    assert any("GitHub: pushed 2 commits to r2a-tester/push-demo-app branch r2a/push-demo-app (new repository)" in m for m in logs(j))
+    assert any(f"GitHub: pushed 2 commits to r2a-tester/push-demo-app branch {BR()} (new repository)" in m for m in logs(j))
     # same name again -> clear conflict
     r = push(j, mode="new")
     assert r.status_code == 409 and "already exists" in r.json()["detail"]
@@ -219,10 +224,10 @@ def test_conflict_never_force_pushes():
     j2 = create_job(roadmap="# Other\n\n### Only\nx\n")
     wait(j2)
     STATE["job2"] = j2
-    before = git(bare("r2a-tester/push-demo-app"), "rev-parse", "refs/heads/r2a/push-demo-app").stdout
-    r = push(j2, mode="existing", repo_full_name="r2a-tester/push-demo-app", branch="r2a/push-demo-app")
+    before = git(bare("r2a-tester/push-demo-app"), "rev-parse", f"refs/heads/{BR()}").stdout
+    r = push(j2, mode="existing", repo_full_name="r2a-tester/push-demo-app", branch=BR())
     assert r.status_code == 409 and "never force-pushes" in r.json()["detail"], r.text
-    assert git(bare("r2a-tester/push-demo-app"), "rev-parse", "refs/heads/r2a/push-demo-app").stdout == before
+    assert git(bare("r2a-tester/push-demo-app"), "rev-parse", f"refs/heads/{BR()}").stdout == before
     assert any("GitHub: push failed - The branch" in m for m in logs(j2))
 
 
@@ -280,8 +285,8 @@ def test_push_notifications_and_watches():
     """Each push emits github_pushed (+ github_pr_opened for a new PR) and upserts a watch."""
     j = STATE["job"]
     pushed = notifs("github_pushed", j)
-    assert pushed and pushed[0]["link"] == "https://github.com/r2a-tester/push-demo-app/tree/r2a/push-demo-app"
-    assert pushed[0]["message"].startswith("Pushed 2 commits to r2a-tester/push-demo-app:r2a/push-demo-app")
+    assert pushed and pushed[0]["link"] == f"https://github.com/r2a-tester/push-demo-app/tree/{BR()}"
+    assert pushed[0]["message"].startswith(f"Pushed 2 commits to r2a-tester/push-demo-app:{BR()}")
     assert pushed[0]["url"].endswith(f"?tab=history&job={j}")
     opened = notifs("github_pr_opened", j)
     assert len(opened) == 1 and opened[0]["link"].endswith(f"/r2a-base/pull/{STATE['pr']}")  # reused PR: no 2nd event
@@ -290,7 +295,7 @@ def test_push_notifications_and_watches():
     w = C.get(f"{BASE}/github/watches").json()
     assert w["poll_seconds"] == 60
     keys = {(x["full_name"], x["branch"]) for x in w["items"]}
-    assert ("r2a-tester/push-demo-app", "r2a/push-demo-app") in keys and ("r2a-tester/r2a-base", "feature/x") in keys
+    assert ("r2a-tester/push-demo-app", BR()) in keys and ("r2a-tester/r2a-base", "feature/x") in keys
     fx = next(x for x in w["items"] if x["branch"] == "feature/x")
     assert fx["pr_number"] == STATE["pr"] and fx["active"] and fx["job_id"] == j and "etags" not in fx
     assert fx["expires_at"] > fx["pushed_at"]
@@ -300,7 +305,7 @@ def test_push_notifications_and_watches():
 def test_poll_conditional_requests_and_external_push():
     """Unchanged resources answer 304; a commit pushed outside the app and passing checks are reported."""
     j = STATE["job"]
-    full, branch = "r2a-tester/push-demo-app", "r2a/push-demo-app"
+    full, branch = "r2a-tester/push-demo-app", BR()
     C.post(f"{BASE}/github/poll")
     n0 = len(httpx.get(f"{GH}/_stub/requests").json())
     C.post(f"{BASE}/github/poll")
@@ -522,7 +527,7 @@ def test_auto_push_on_completion():
         time.sleep(0.3)
     lp = C.get(f"{BASE}/jobs/{j}/github").json()["last_push"]
     assert lp and lp["source"] == "auto" and lp["repo"]["full_name"] == f"r2a-tester/auto-pushed-{j[:6]}"
-    assert lp["repo"]["private"] is False and lp["branch"] == "r2a/auto-pushed"
+    assert lp["repo"]["private"] is False and lp["branch"] == f"r2a/job-{j[:8]}"
     assert any("GitHub: auto-pushed 2 commits" in m for m in logs(j))
     # resume/restart semantics: a failing job is not auto-pushed
     e = create_job(model="stub-503")
