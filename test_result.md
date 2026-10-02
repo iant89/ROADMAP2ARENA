@@ -49,6 +49,8 @@ Notes:
 | V-006 | MINOR | Frontend HeaderBar (mobile) | Axiom Vision: tall mobile header. Queued count moved into the status row (icon + number below sm), subtitle hidden sm:block, "steps" word hidden below sm; header 96px at 390px | FIXED |
 | V-007 | MINOR | Frontend Clone form / StartForm | Axiom Vision: mixed input/textarea sizes and fonts. All four fields font-mono text-base sm:text-sm (16px mobile, 14px desktop) | FIXED |
 | V-008 | MINOR | Frontend SettingsTab | Axiom Vision: inconsistent ".env default" hint position. Label rows flex flex-wrap items-baseline justify-between gap-x-2, hint min-w-0 truncate (same pattern in StartForm field labels) | FIXED |
+| B-004 | MAJOR | PUT /api/notifications/settings, POST /api/notifications/test/email | A non-object JSON body (e.g. a list or string) that contains an SMTP password gets a FastAPI 422 dict_type error that echoes the submitted body in "input", including the password in clear text. The stored password is never returned. Cause: `body: dict = Body(...)` in notification_routes.py uses default request validation | OPEN |
+| B-005 | MINOR | DELETE /api/notifications/settings | Returns 404 "Notification settings not found" instead of 405: DELETE /api/notifications/{notif_id} captures "settings" (also POST /api/notifications/settings/read -> 404). Harmless (no data changed) | OPEN |
 
 ## Test Log
 
@@ -209,3 +211,25 @@ Network failures: None (no requestfailed, no CORS errors, no wrong host, no miss
 Retested: none (no Retest items, no FIXED issues; F-002 stays SKIPPED)
 Not tested: Resume/Restart controls beyond their presence; stub-503-once-at-N and stub-slow-at-N; arena-stub restart (not allowed); real arena2api. The brief "Waiting for next job" state between two queued jobs (~1 s, 2 s queue poll) was not caught by the sampler; the reset was confirmed after the last job and after a stop, and the automatic hand-over A -> C -> B was seen on desktop and mobile.
 Status list (status.jsx STATUS_META): pending, running, done (Completed), error (Failed), stopped, queued, paused, cancelled, idle; all 7 job statuses (Queued, Running, Paused, Completed, Failed, Stopped, Cancelled) were produced and their badges seen in the history list and filter chips.
+
+### Backend test run - 2026-10-01 23:17 ET
+Tester: backend testing agent
+Scope: branch feat/notifications (PR #6 job deletion + PR #7 notifications). All destructive tests ran on a private backend from backend/tests/isolated_server.py (127.0.0.1, free port, throwaway DB roadmap2arena_test_<hex>, dropped on exit). I checked the harness first: DB_NAME is overridden by env (load_dotenv does not override), it binds 127.0.0.1, and it drops only its own DB. Webhooks went to a local http.server receiver (ok/500/slow 12 s/refused) and email to local aiosmtpd sinks (plain, AUTH-required, 554-reject, refused port), all on 127.0.0.1 inside the test process. No real email or outside host was contacted.
+New suite /app/backend/tests/test_delete_notify_extra.py:
+- Deletion: hard delete removes the job and its steps (Mongo-checked) and every sub-resource/action returns 404; running -> 409 and bulk skip "running"; queued/paused delete renumbers the queue; cancel vs the deprecated DELETE alias (same body; Deprecation/Link headers only on the alias); bulk with mixed/duplicate/blank/unknown/running ids, 500-id max and 422s; delete-finished (isolated DB only) removes only done/error/stopped/cancelled.
+- Deletion races: 6 parallel deletes -> one 200; delete vs start at 7 offsets -> either 200 (queued, never ran) or 409 (started); parallel bulk + delete-finished + single deletes -> each id deleted exactly once, no orphan steps.
+- Notifications: settings shape and 35 invalid bodies -> 422 with nothing saved; password write-only (omitted/mask keep, "" clears, unsaved test override not saved); test webhook/email to the local sinks incl. 500/refused/timeout/STARTTLS/554/auth errors; the 4 events with payload shape, per-run-once, queue_empty only when drained with the paused note; toggles off -> silent; in-app off + webhook on; slow/failing webhook and SMTP never delay or break jobs (next job started <2 s); list/read/read-all/delete/clear incl. concurrent calls; no _id.
+Also ran Axiom's test_deletion.py 10/10 and test_notifications.py 12/12 (isolated), then a regression on the main backend: run_tests.py 21/21, test_job_controls.py 18/18 (ONCE_N=9), test_queue_settings.py 10/10, test_history.py 7/7, test_history_extra.py 11/11 (via :8080).
+Result: FAIL
+Passed: 105   Failed: 2
+Failures:
+- [B-004][MAJOR] PUT /api/notifications/settings with a JSON list/string body containing a password - expected 422 without the password vs actual 422 whose "input" echoes the submitted password (same for POST /api/notifications/test/email) - notification_routes.py put_settings/test_email take `body: dict = Body(...)`, so FastAPI's default validation error includes the raw input (reproduced in 2 runs and with curl)
+- [B-005][MINOR] DELETE /api/notifications/settings - expected 405 vs actual 404 "Notification settings not found" - DELETE /api/notifications/{notif_id} route matches "settings" (reproduced twice)
+Retested: none for the backend. F-003, F-004, F-005 and V-001..V-008 are frontend items; I can't retest them as backend tester, so their status is unchanged.
+Observations (not tracked):
+- Webhook and email deliveries for one event run one after the other, so a slow webhook delays the email result by up to 10 s; jobs are not affected.
+- In one stop-vs-finish race (stop at about 5.0 s on a 1-step job) the job ended "stopped" with stopped_step null after its only step was done (resume then says nothing left). Seen once.
+Cleanup: all test_ jobs deleted. The 112 notifications my main-backend regression created were deleted by Mongo query (created during my run window, titles test_ or queue_empty); main had no other notifications. Run settings equal the .env defaults (checked with GET). Main notification settings were never changed (webhook/email disabled, no password set). Nothing queued or running.
+Processes I started: isolated uvicorn backends via the harness (one per suite run, each terminated, DB dropped) and the in-process local webhook/SMTP sinks (stopped at the end of each run). /tmp/reg_wt.py and its isolated uvicorn plus the DBs roadmap2arena_test_749ca62f and roadmap2arena_test_c93ff1a4 are not mine and were left alone.
+Not tested: backend restart mid-job; real SMTP/webhook providers (not allowed); TLS/SSL SMTP against a real TLS server; the 500-notification cap.
+
