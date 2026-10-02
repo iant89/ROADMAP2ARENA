@@ -1,10 +1,9 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronUp, CircleAlert, FileText, Play, Sparkles } from 'lucide-react'
+import { CircleAlert, PlusCircle, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
 
 function Field({ id, label, hint, error, children }) {
@@ -35,9 +34,8 @@ function isHttpUrl(value) {
 
 const inputCls = 'bg-card h-9'
 
-export default function StartForm({
-  form, onChange, stepCount, onStart, onLoadSample, starting, jobRunning, collapsed, expanded, onToggleExpanded,
-}) {
+// Create job form. Submitting enqueues the job; it starts at once when nothing is running.
+export default function StartForm({ form, onChange, stepCount, onSubmit, onLoadSample, submitting, queueInfo, settings, onOpenSettings }) {
   // Inline errors appear once a field has been edited (avoids a flash before config defaults load).
   const [touched, setTouched] = useState({})
   const set = (key) => (e) => {
@@ -48,10 +46,14 @@ export default function StartForm({
   const urlError = !form.arena_url.trim()
     ? 'arena2api base URL is required'
     : isHttpUrl(form.arena_url) ? null : 'Use an http:// or https:// URL'
-  const startDisabled = jobRunning || starting || stepCount === 0 || Boolean(urlError) || Boolean(modelError)
-  const open = !collapsed || expanded
+  const disabled = submitting || stepCount === 0 || Boolean(urlError) || Boolean(modelError)
+  const ahead = (queueInfo?.running ? 1 : 0) + (queueInfo?.waiting ?? 0)
+  const queueHint = !queueInfo
+    ? ''
+    : ahead === 0 ? 'Nothing is running - it starts right away.'
+      : `${ahead} job${ahead === 1 ? '' : 's'} ahead - it waits its turn in the queue.`
 
-  const fields = (
+  return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-[1.4fr_1fr]">
         <Field id="arena_url" label="arena2api base URL" error={touched.arena_url ? urlError : null}>
@@ -83,7 +85,7 @@ export default function StartForm({
         <Textarea
           id="roadmap_md"
           data-testid="roadmap-input"
-          className="field-sizing-fixed h-52 resize-y bg-card font-mono text-[12.5px] leading-relaxed"
+          className="field-sizing-fixed h-60 resize-y bg-card font-mono text-[12.5px] leading-relaxed"
           value={form.roadmap_md}
           onChange={set('roadmap_md')}
           placeholder={'### Project skeleton\nCreate the package layout...\n\n- [ ] Add tests'}
@@ -91,35 +93,20 @@ export default function StartForm({
         />
       </Field>
       <div className="flex flex-wrap items-center gap-3">
-        <Button size="lg" onClick={onStart} disabled={startDisabled} data-testid="start-job-button" className="px-4 hover:-translate-y-px">
-          <Play /> {jobRunning ? 'Job running...' : 'Start job'}
+        <Button size="lg" onClick={onSubmit} disabled={disabled} data-testid="start-job-button" className="px-4 hover:-translate-y-px">
+          <PlusCircle /> {submitting ? 'Adding...' : 'Add to queue'}
         </Button>
-        <Button size="lg" variant="outline" onClick={onLoadSample} disabled={jobRunning} data-testid="load-sample-button" className="px-3 hover:-translate-y-px">
+        <Button size="lg" variant="outline" onClick={onLoadSample} data-testid="load-sample-button" className="px-3 hover:-translate-y-px">
           <Sparkles /> Load sample roadmap
         </Button>
-        {jobRunning && <span className="text-xs text-muted-foreground">One job at a time - wait for it to finish.</span>}
+        <span className="text-xs text-muted-foreground" data-testid="queue-hint">{queueHint}</span>
       </div>
-    </div>
-  )
-
-  if (!collapsed) return fields
-
-  return (
-    <Collapsible open={open} onOpenChange={onToggleExpanded}>
-      <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-3.5 py-2.5" data-testid="form-summary">
-        <FileText className="size-4 shrink-0 text-muted-foreground" />
-        <p className="min-w-0 flex-1 truncate text-[13px]">
-          <span className="font-mono font-medium">{form.model}</span>
-          <span className="mx-2 text-muted-foreground">via</span>
-          <span className="font-mono text-muted-foreground">{form.arena_url}</span>
-          <span className="mx-2 text-muted-foreground">-</span>
-          <span>{stepCount} steps</span>
+      {settings && (
+        <p className="text-xs text-muted-foreground" data-testid="run-settings-hint">
+          Runs use a {settings.step_delay_seconds}s pause between steps and a {settings.request_timeout_seconds}s request timeout
+          {' '}(<button type="button" className="font-medium text-foreground underline underline-offset-2" onClick={onOpenSettings}>change in Settings</button>).
         </p>
-        <Button variant="ghost" size="sm" onClick={() => onToggleExpanded(!open)} data-testid="toggle-form-button">
-          {open ? <ChevronUp /> : <ChevronDown />} {open ? 'Hide inputs' : 'Edit inputs'}
-        </Button>
-      </div>
-      <CollapsibleContent className="r2a-rise pt-5">{fields}</CollapsibleContent>
-    </Collapsible>
+      )}
+    </div>
   )
 }

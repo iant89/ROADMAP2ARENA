@@ -3,8 +3,10 @@ import { toast } from 'sonner'
 import { getJob } from '@/lib/api'
 
 const POLL_MS = 1500
+const LIVE = ['running', 'queued', 'paused']
 
-// Loads a job by id and polls GET /api/jobs/{id} every 1.5 s while it runs.
+// Loads a job by id and polls GET /api/jobs/{id} every 1.5 s while it is running,
+// queued or paused (a queued job starts on its own when its turn comes).
 // Transient errors keep the last known state and retry on the next tick.
 // Toasts fire when a job observed as running in this session finishes or fails.
 export function useJob(jobId) {
@@ -52,7 +54,7 @@ export function useJob(jobId) {
     let alive = true
     const tick = async () => {
       const next = await refresh()
-      if (alive && next?.status === 'running') timer = setTimeout(tick, POLL_MS)
+      if (alive && LIVE.includes(next?.status)) timer = setTimeout(tick, POLL_MS)
     }
     tick()
     return () => {

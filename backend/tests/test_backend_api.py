@@ -95,7 +95,8 @@ def test_config():
     r = c.get(f"{BASE}/config")
     assert r.status_code == 200
     d = r.json()
-    assert set(d) == {"arena_url", "model", "step_delay_seconds"}
+    # request_timeout_seconds added with runtime settings (feat/tabs-and-queue)
+    assert set(d) == {"arena_url", "model", "step_delay_seconds", "request_timeout_seconds"}
     assert isinstance(d["step_delay_seconds"], (int, float))
 
 
@@ -179,7 +180,8 @@ def test_happy_job_lifecycle():
     ctx = f"test_{SUFFIX} context ✨ 日本語 \"quotes\" <b>"
     r = create({"arena_url": STUB, "model": "gpt-4o", "project_context": ctx, "roadmap_md": ROADMAP3})
     jid = r.json()["job_id"]
-    assert set(r.json()) == {"job_id"} and is_uuid4(jid)
+    # queue: POST /jobs also returns status (running|queued) and queue_position
+    assert set(r.json()) == {"job_id", "status", "queue_position"} and is_uuid4(jid)
     STATE["happy"] = jid
     first = c.get(f"{BASE}/jobs/{jid}").json()
     assert first["status"] in ("running", "done")
@@ -187,7 +189,8 @@ def test_happy_job_lifecycle():
     no_id(j)
     keys = {"job_id", "status", "error", "failed_step", "title", "created_at", "finished_at", "arena_url", "model",
             "project_context", "roadmap_md", "step_total", "steps_done", "steps", "log",
-            "stopped_step", "restarted_from"}  # added with job controls (stop/restart/resume)
+            "stopped_step", "restarted_from",  # added with job controls (stop/restart/resume)
+            "queue_position", "queued_at", "started_at"}  # added with the job queue
     assert set(j) == keys, set(j) ^ keys
     assert j["status"] == "done" and j["error"] is None and j["failed_step"] is None
     assert j["step_total"] == 3 and j["steps_done"] == 3
@@ -273,7 +276,8 @@ def test_list_jobs():
     no_id(d)
     assert isinstance(d, list) and 1 <= len(d) <= 20
     keys = {"job_id", "status", "created_at", "step_total", "steps_done", "title", "model", "failed_step",
-            "stopped_step"}  # stopped_step added with job controls
+            "stopped_step",  # stopped_step added with job controls
+            "restarted_from", "queue_position", "queued_at", "started_at", "finished_at", "paused"}  # job queue
     for j in d:
         assert set(j) == keys, set(j) ^ keys
         assert ISO_Z.match(j["created_at"])
@@ -321,16 +325,20 @@ def test_unreachable_arena():
     assert j["status"] == "error" and j["failed_step"] == 1 and "could not reach" in j["error"]
 
 
-# ---------------------------------------------------------------- 409 / concurrency
+# ---------------------------------------------------------------- queue / concurrency
+# Changed with the job queue: a second job is no longer rejected with 409, it is
+# queued (201, status "queued", queue_position 1) and starts when the first ends.
 def test_second_job_409_while_running():
     jid = create({"arena_url": STUB, "model": "stub-slow", "roadmap_md": roadmap(1, "slow")}).json()["job_id"]
     r = c.post(f"{BASE}/jobs", json={"arena_url": STUB, "model": "gpt-4o", "roadmap_md": roadmap(1, "second")})
     if r.status_code == 201:
         CREATED.append(r.json()["job_id"])
-    assert r.status_code == 409, r.text
+    assert r.status_code == 201, r.text
+    assert r.json()["status"] == "queued" and r.json()["queue_position"] == 1, r.json()
     assert c.get(f"{BASE}/jobs/{jid}").json()["status"] == "running"
     j = wait(jid, 30)
     assert j["status"] == "done"
+    assert wait(r.json()["job_id"], 30)["status"] == "done"
 
 
 def test_concurrent_create_only_one_wins():
@@ -352,10 +360,13 @@ def test_concurrent_create_only_one_wins():
     codes = sorted(r.status_code for r in results)
     running = [j for j in c.get(f"{BASE}/jobs").json() if j["status"] == "running"]
     wait_all()
-    assert len(ok) == 1, f"expected exactly one 201, got {codes}"
-    assert codes.count(409) == 5, codes
-    assert [j["job_id"] for j in running] == [ok[0].json()["job_id"]], running
-    assert wait(ok[0].json()["job_id"])["status"] == "done"
+    # queue: all six are accepted; exactly one runs, the rest get positions 1..5
+    assert codes == [201] * 6, codes
+    started = [r.json()["job_id"] for r in ok if r.json()["status"] == "running"]
+    assert len(started) == 1, [r.json() for r in ok]
+    assert sorted(r.json()["queue_position"] for r in ok if r.json()["status"] == "queued") == [1, 2, 3, 4, 5]
+    assert [j["job_id"] for j in running] == started, running
+    assert all(wait(r.json()["job_id"])["status"] == "done" for r in ok)
 
 
 # ---------------------------------------------------------------- cleanup

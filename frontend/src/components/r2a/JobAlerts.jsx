@@ -1,4 +1,4 @@
-import { CircleCheckBig, CircleStop, Download, TriangleAlert } from 'lucide-react'
+import { Ban, CircleCheckBig, CircleStop, Download, TriangleAlert } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 
@@ -30,6 +30,17 @@ export default function JobAlerts({ job, onDownload }) {
         <AlertDescription className="text-[13px] text-foreground/85">
           {job.steps_done} of {job.step_total} steps finished.
           {next ? ` Resume continues from step ${next.index}; Restart starts a new job from step 1.` : ''}
+        </AlertDescription>
+      </Alert>
+    )
+  }
+  if (job.status === 'cancelled') {
+    return (
+      <Alert className="r2a-rise border-border bg-muted px-4 py-3.5 text-slate" data-testid="job-cancelled-alert">
+        <Ban />
+        <AlertTitle className="font-semibold">Removed from the queue</AlertTitle>
+        <AlertDescription className="text-[13px] text-foreground/85">
+          {job.steps_done} of {job.step_total} steps finished. Resume puts it back in the queue; Restart queues a fresh copy.
         </AlertDescription>
       </Alert>
     )

@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle, CircleStop, Loader2, XCircle } from 'lucide-react'
+import { Ban, CheckCircle2, Circle, CircleStop, ListOrdered, Loader2, Pause, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export const STATUS_META = {
@@ -7,6 +7,9 @@ export const STATUS_META = {
   done: { label: 'Done', icon: CheckCircle2, tone: 'text-teal', chip: 'bg-teal-soft text-teal border-teal/30' },
   error: { label: 'Error', icon: XCircle, tone: 'text-coral', chip: 'bg-coral-soft text-coral border-coral/30' },
   stopped: { label: 'Stopped', icon: CircleStop, tone: 'text-stop', chip: 'bg-stop-soft text-stop border-stop/30' },
+  queued: { label: 'Queued', icon: ListOrdered, tone: 'text-queue', chip: 'bg-queue-soft text-queue border-queue/30' },
+  paused: { label: 'Paused', icon: Pause, tone: 'text-pause', chip: 'bg-pause-soft text-pause border-pause/35 border-dashed' },
+  cancelled: { label: 'Cancelled', icon: Ban, tone: 'text-slate', chip: 'bg-muted text-slate border-border' },
   idle: { label: 'Idle', icon: Circle, tone: 'text-slate', chip: 'bg-card text-muted-foreground border-border' },
 }
 
@@ -21,11 +24,13 @@ export function StatusIcon({ status, className }) {
   )
 }
 
-export function StatusChip({ status, children, className }) {
+export const FINISHED_STATUSES = ['done', 'error', 'stopped', 'cancelled']
+
+export function StatusChip({ status, children, className, testId = 'job-status-badge' }) {
   const meta = STATUS_META[status] || STATUS_META.pending
   return (
     <span
-      data-testid="job-status-badge"
+      data-testid={testId}
       className={cn(
         'inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs font-semibold tracking-wide uppercase',
         meta.chip,
@@ -46,4 +51,13 @@ export function formatTime(iso) {
 export function formatDateTime(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
+export function relativeTime(iso) {
+  if (!iso) return ''
+  const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000)
+  if (s < 45) return 'just now'
+  if (s < 3600) return `${Math.round(s / 60)} min ago`
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`
+  return formatDateTime(iso)
 }
