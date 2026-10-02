@@ -17,9 +17,10 @@ function isHttpUrl(value) {
   }
 }
 
-// Stop (two-click confirm) while running; Resume (error/stopped) and
-// Restart (done/error/stopped) with optional model/URL overrides.
-export default function JobControls({ job, anotherRunning, busy, onStop, onResume, onRestart }) {
+// Stop (two-click confirm) while running; Resume (error/stopped/cancelled) and
+// Restart (any finished job) with optional model/URL overrides. Both go through
+// the queue: they start at once when nothing is running, otherwise they wait.
+export default function JobControls({ job, busy, onStop, onResume, onRestart }) {
   const [confirmStop, setConfirmStop] = useState(false)
   const [showOverrides, setShowOverrides] = useState(false)
   const [overrides, setOverrides] = useState({ arena_url: job.config.arena_url, model: job.config.model })
@@ -35,8 +36,8 @@ export default function JobControls({ job, anotherRunning, busy, onStop, onResum
   }, [confirmStop])
 
   const running = job.status === 'running'
-  const canResume = job.status === 'error' || job.status === 'stopped'
-  const canRestart = ['done', 'error', 'stopped'].includes(job.status)
+  const canResume = ['error', 'stopped', 'cancelled'].includes(job.status)
+  const canRestart = ['done', 'error', 'stopped', 'cancelled'].includes(job.status)
   const modelError = overrides.model.trim() ? null : 'Model is required'
   const urlError = isHttpUrl(overrides.arena_url) ? null : 'Use an http:// or https:// URL'
   const invalid = showOverrides && Boolean(modelError || urlError)
@@ -71,12 +72,12 @@ export default function JobControls({ job, anotherRunning, busy, onStop, onResum
     <Collapsible open={showOverrides} onOpenChange={setShowOverrides} className="space-y-3" data-testid="job-controls">
       <div className="flex flex-wrap items-center gap-2">
         {canResume && (
-          <Button size="sm" onClick={() => onResume(payload)} disabled={busy || anotherRunning || invalid} data-testid="resume-job-button" className="hover:-translate-y-px">
+          <Button size="sm" onClick={() => onResume(payload)} disabled={busy || invalid} data-testid="resume-job-button" className="hover:-translate-y-px">
             <Play /> Resume{resumeFrom ? ` from step ${resumeFrom}` : ''}
           </Button>
         )}
         {canRestart && (
-          <Button size="sm" variant="outline" onClick={() => onRestart(payload)} disabled={busy || anotherRunning || invalid} data-testid="restart-job-button" className="hover:-translate-y-px">
+          <Button size="sm" variant="outline" onClick={() => onRestart(payload)} disabled={busy || invalid} data-testid="restart-job-button" className="hover:-translate-y-px">
             <RotateCcw /> Restart as new job
           </Button>
         )}
@@ -86,7 +87,7 @@ export default function JobControls({ job, anotherRunning, busy, onStop, onResum
           </Button>
         </CollapsibleTrigger>
       </div>
-      {anotherRunning && <p className="text-xs text-muted-foreground">Another job is running - wait for it to finish.</p>}
+      <p className="text-xs text-muted-foreground">If another job is running, this is added to the job queue.</p>
       <CollapsibleContent className="r2a-rise">
         <div className="grid gap-3 rounded-lg border border-border bg-paper p-3.5 sm:grid-cols-[1.4fr_1fr]" data-testid="overrides-panel">
           <div className="space-y-1.5">

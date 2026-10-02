@@ -11,20 +11,21 @@
 ## Test Request
 
 Agent: backend
-Date: 2026-10-01 20:52 ET
-Built or changed: stop/restart/resume endpoints for jobs (new "stopped" status for jobs and steps), orchestrator task registry and resume history rebuild
-Key endpoints or flows: POST /api/jobs/{id}/stop, POST /api/jobs/{id}/restart (optional body {arena_url, model}), POST /api/jobs/{id}/resume (optional body {arena_url, model}) + regression of GET /api/config, POST /api/roadmap/parse, POST /api/jobs, GET /api/jobs, GET /api/jobs/{id}, GET /api/jobs/{id}/steps/{index}, GET /api/jobs/{id}/download
+Date: 2026-10-01 21:10 ET
+Built or changed: real job queue (new job statuses "queued", "paused", "cancelled"; fields queue_position, queued_at, started_at; scheduler worker that starts the next unpaused queued job whenever nothing runs) and runtime settings stored in MongoDB (collection "settings", seeded from backend/.env). POST /api/jobs, restart and resume now ENQUEUE instead of returning 409 when a job is running. Frontend moved to top-level tabs (Create job | Job queue | Current job | Job history | Settings) on branch feat/tabs-and-queue.
+Key endpoints or flows: POST /api/jobs -> 201 {job_id, status: running|queued, queue_position}; GET /api/queue -> {running, queued[], count, waiting}; POST /api/queue/{id}/move {direction: up|down} or {position: n}; POST /api/queue/{id}/pause (moves to END of queue); POST /api/queue/{id}/unpause (keeps position); DELETE /api/queue/{id} (status cancelled, kept in history); GET /api/jobs?status=a,b&limit=1..200; GET/PUT /api/settings (arena_url http/https, model non-empty, step_delay_seconds 0-600, request_timeout_seconds 10-3600; partial PUT allowed, unknown keys 422); POST /api/settings/reset; GET /api/config now returns the current settings; restart/resume enqueue + regression of all earlier endpoints
 Data: real backend
 Features present: sessions no, auth no, integrations: arena2api via local stand-in only
-Retest: B-003
+Retest: none
 Test accounts: none
 Notes:
-- Stand-in on http://127.0.0.1:9090 (backend http://127.0.0.1:8001/api, or via Caddy http://localhost:8080/api). Magic models: stub-503, stub-503-at-N (503 on turn N every time), stub-503-once-at-N (503 on turn N only the first time per stub process; note this state is per stub process, so use a fresh N or another model if it already fired), stub-slow (5 s every call), stub-slow-at-N (5 s only on turn N - good for stopping mid-step).
-- Every stub reply starts with "(stub reply for user turn N of the conversation)". Resume expectation: after resuming at step k, the step-k response must say turn k (not turn 1), because the orchestrator rebuilds the chat history from the done steps' stored prompt/response pairs (user, assistant, in order); previously created files must be listed in the step-k prompt.
-- Stop: only for running jobs (409 otherwise, 404 unknown); the running step becomes "stopped", later steps stay pending, job "stopped" with stopped_step and finished_at; the abandoned request must never flip the step to done later (wait > 5 s after stopping a stub-slow call).
-- Resume: only error/stopped jobs (409 for done/running or when another job runs); same job_id; steps from k on are reset to pending; overrides validated (422 for non-http(s) URL / empty model). Restart: only done/error/stopped jobs; 201 with a NEW job_id, restarted_from = old id; same validation.
-- One job at a time applies to POST /api/jobs, resume and restart (409); wait for each job to finish (or stop it) before the next.
-- New response fields: stopped_step and restarted_from on job detail, stopped_step on the job list. The backend suite (tests/test_backend_api.py) key-set assertions were updated for these fields by the main agent.
+- Stand-in on http://127.0.0.1:9090 (backend http://127.0.0.1:8001/api, or via Caddy http://localhost:8080/api). Stub unchanged. Magic models: stub-503, stub-503-at-N, stub-503-once-at-N (per stub process - use a fresh N), stub-slow (5 s every call), stub-slow-at-N (5 s only on turn N). Use stub-slow for the running job so others stay queued; use gpt-4o (instant) for queued jobs you want to finish fast.
+- Timing: a job takes about steps x reply time + (steps - 1) x step delay (default delay 2 s from .env). With 2-step stub-slow jobs, each job runs ~12 s. The worker starts the next job right after a job ends or a stop is recorded (and re-checks every 5 s as a safety net), so allow ~1 s after a job ends before expecting the next one to be running.
+- Expected queue rules: exactly one running job; queue positions are always dense 1..n over queued + paused jobs, in order; move/pause/unpause/DELETE return 409 for jobs not queued/paused and 404 for unknown ids; move with neither or both of direction/position, a bad direction or position < 1 gives 422 (positions beyond the end clamp to last); pausing an already paused job is a no-op 200; paused jobs are skipped by the scheduler; stop on a queued/paused job gives 409 (use DELETE).
+- Restart: one active restart per source job (a second restart while the first is queued/paused/running is 409). Resume of a job that is already queued gives 409. Resume/restart responses now include status and queue_position. Cancelled jobs can be resumed or restarted.
+- Startup: running jobs become error "interrupted by server restart" (as before); queued/paused jobs keep their order and the next one starts automatically.
+- Settings changes apply to the NEXT run (new, resumed or restarted); the job log line "Job started: ..., step delay Xs, timeout Ys" shows the values used. Please reset settings afterwards (POST /api/settings/reset).
+- Tests changed by the main agent (minimal, commented in the code): tests/test_backend_api.py (test_second_job_409_while_running now expects 201 queued at position 1; test_concurrent_create_only_one_wins expects six 201s, one running, positions 1-5; test_config/key-set assertions include the new fields) and tests/test_job_controls.py (new job while a resume runs is queued; concurrent resume/new job/restart mix expects one resume 200 + three 409 + two 201; response key sets). New: tests/queue_smoke.sh (curl + jq, 58 checks, cleans up its jobs).
 - Put test scripts in /app/backend/tests/.
 
 ## Issue Tracker

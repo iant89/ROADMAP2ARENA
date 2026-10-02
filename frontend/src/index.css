@@ -17,6 +17,10 @@
     --color-slate: var(--r2a-slate);
     --color-stop: var(--r2a-stop);
     --color-stop-soft: var(--r2a-stop-soft);
+    --color-queue: var(--r2a-queue);
+    --color-queue-soft: var(--r2a-queue-soft);
+    --color-pause: var(--r2a-pause);
+    --color-pause-soft: var(--r2a-pause-soft);
     --color-ink: var(--r2a-ink);
     --color-ink-foreground: var(--r2a-ink-foreground);
     --color-paper: var(--r2a-paper);
@@ -102,6 +106,10 @@
     --r2a-slate: #6B7585;
     --r2a-stop: #6E5F44;
     --r2a-stop-soft: #EEE8DC;
+    --r2a-queue: #4D5B78;
+    --r2a-queue-soft: #E5E8EF;
+    --r2a-pause: #8A6B3E;
+    --r2a-pause-soft: #F3ECDF;
     --r2a-ink: #171A1F;
     --r2a-ink-foreground: #E7E2D8;
     --r2a-paper: #FBFAF7;

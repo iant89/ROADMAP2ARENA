@@ -182,17 +182,21 @@ def test_resume_stopped_job_rebuilds_history():
     jid = S["stop"]
     r = c.post(f"{BASE}/jobs/{jid}/resume")
     assert r.status_code == 200, r.text
-    assert r.json() == {"job_id": jid, "status": "running", "resumed_from_step": 2}
+    # job queue: resume responses also carry queue_position (None when it starts at once)
+    assert r.json() == {"job_id": jid, "status": "running", "resumed_from_step": 2, "queue_position": None}
     j = job(jid)
     assert j["status"] == "running" and j["stopped_step"] is None and j["finished_at"] is None
-    # while running: second resume, new job, restart of another, stop of nothing else -> 409
+    # while running: second resume and restart of the running job -> 409
     assert c.post(f"{BASE}/jobs/{jid}/resume").status_code == 409
+    # job queue: a new job is no longer 409 while one runs - it is queued (position 1)
     r = c.post(f"{BASE}/jobs", json={"arena_url": STUB, "model": "gpt-4o", "roadmap_md": roadmap(1, "blocked")})
     if r.status_code == 201:
         CREATED.append(r.json()["job_id"])
-    assert r.status_code == 409
+    assert r.status_code == 201 and r.json()["status"] == "queued" and r.json()["queue_position"] == 1, r.text
+    queued_id = r.json()["job_id"]
     assert c.post(f"{BASE}/jobs/{jid}/restart").status_code == 409
     j = wait(jid)
+    assert wait(queued_id)["status"] == "done"  # started by the scheduler after the resumed job
     assert j["status"] == "done", (j["status"], j["error"])
     assert j["steps_done"] == 3 and j["error"] is None and j["stopped_step"] is None
     assert any("Resumed from step 2" in e["msg"] for e in j["log"])
@@ -223,9 +227,10 @@ def test_concurrent_restart_one_wins():
     running = [x["job_id"] for x in c.get(f"{BASE}/jobs").json() if x["status"] == "running"]
     for r in ok:
         wait(r.json()["job_id"])
+    # job queue: duplicates are still rejected (one active restart per source job)
     assert len(ok) == 1 and codes.count(409) == 5, codes
     new = ok[0].json()["job_id"]
-    assert set(ok[0].json()) == {"job_id"} and new != old and uuid.UUID(new).version == 4
+    assert set(ok[0].json()) == {"job_id", "status", "queue_position"} and new != old and uuid.UUID(new).version == 4
     assert running == [new], running
     S["restarted"] = new
 
@@ -264,14 +269,11 @@ def test_error_job_concurrent_resume_with_override():
     running = [x["job_id"] for x in c.get(f"{BASE}/jobs").json() if x["status"] == "running"]
     for x in list(CREATED):
         wait(x)
-    winners = [r for r in res if r.status_code in (200, 201)]
-    assert len(winners) == 1 and codes.count(409) == 5, codes
+    # job queue: one resume wins (200, running or queued), the other resumes get 409;
+    # the new job and the restart are queued (201) instead of 409. Still one job runs.
+    assert sorted(codes[:4]) == [200, 409, 409, 409] and codes[4:] == [201, 201], codes
     assert len(running) == 1, running
-    if res.index(winners[0]) >= 4:  # resume lost the race; resume now
-        r = c.post(f"{BASE}/jobs/{jid}/resume", json={"model": "gpt-4o"})
-        assert r.status_code == 200
-    else:
-        r = winners[0]
+    r = next(x for x in res[:4] if x.status_code == 200)
     assert r.json()["resumed_from_step"] == 3
     j = wait(jid)
     assert j["status"] == "done" and j["model"] == "gpt-4o" and j["error"] is None and j["failed_step"] is None

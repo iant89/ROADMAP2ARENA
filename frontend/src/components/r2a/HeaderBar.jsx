@@ -1,16 +1,12 @@
-import { Download, History, Route } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { ListOrdered, Route } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
-import { cn } from '@/lib/utils'
 import { StatusChip } from './status'
 
-export default function HeaderBar({ job, onDownload, downloading, onOpenRecent }) {
-  const status = job ? job.status : 'idle'
-  const done = job?.steps_done ?? 0
-  const total = job?.step_total ?? 0
+// Status badge + progress of the running job (from GET /api/queue), plus the queue size.
+export default function HeaderBar({ running, queueCount, onOpenCurrent, onOpenQueue }) {
+  const done = running?.steps_done ?? 0
+  const total = running?.step_total ?? 0
   const pct = total ? Math.round((done / total) * 100) : 0
-  const canDownload = Boolean(job && done >= 1)
-  const emphasize = job?.status === 'done'
 
   return (
     <header className="border-b border-border bg-card">
@@ -25,35 +21,26 @@ export default function HeaderBar({ job, onDownload, downloading, onOpenRecent }
           </div>
         </div>
 
-        <StatusChip status={status} />
+        <button type="button" onClick={onOpenCurrent} className="rounded-full" aria-label="Open current job">
+          <StatusChip status={running ? 'running' : 'idle'} />
+        </button>
 
         <div className="flex min-w-[180px] flex-1 items-center gap-3" data-testid="job-progress">
-          <Progress
-            value={pct}
-            className={cn('h-2 bg-secondary', status === 'error' && '[&>div]:bg-coral', status === 'stopped' && '[&>div]:bg-stop', status === 'done' && '[&>div]:bg-teal')}
-          />
+          {running && <span className="hidden max-w-[280px] shrink-0 truncate text-[13px] font-medium md:inline" data-testid="header-job-title">{running.title}</span>}
+          <Progress value={pct} className="h-2 bg-secondary" />
           <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
             {done} / {total} steps
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="lg" onClick={onOpenRecent} data-testid="recent-jobs-button" className="px-3 hover:-translate-y-px">
-            <History /> Recent jobs
-          </Button>
-          <Button
-            size="lg"
-            onClick={onDownload}
-            disabled={!canDownload || downloading}
-            data-testid="download-zip-button"
-            className={cn(
-              'px-3 hover:-translate-y-px',
-              emphasize && 'r2a-pulse bg-teal text-white hover:bg-teal/90',
-            )}
-          >
-            <Download /> {downloading ? 'Packing...' : 'Download ZIP'}
-          </Button>
-        </div>
+        <button
+          type="button"
+          onClick={onOpenQueue}
+          data-testid="header-queue-count"
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <ListOrdered className="size-4" /> {queueCount} queued
+        </button>
       </div>
     </header>
   )

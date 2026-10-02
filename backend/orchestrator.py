@@ -16,9 +16,11 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+from typing import Callable
+
 import openai
 
-import settings
+import app_settings
 from arena_client import ArenaClient, build_prompt
 from artifact_extractor import count_unnamed_blocks, extract_artifacts
 
@@ -34,6 +36,13 @@ _stop_requested: set[str] = set()
 # Concurrent stop callers await the same operation instead of cancelling again.
 _stop_ops: dict[str, tuple[asyncio.Task, asyncio.Task]] = {}
 STOP_WAIT_SECONDS = 10
+# Called when a job may have finished (set by the scheduler to wake the queue worker).
+on_job_end: Callable[[], None] | None = None
+
+
+def _notify_end() -> None:
+    if on_job_end:
+        on_job_end()
 
 
 def now_iso() -> str:
@@ -48,7 +57,7 @@ async def append_log(db, job_id: str, level: str, msg: str) -> None:
     )
 
 
-def describe_error(exc: Exception, arena_url: str) -> str:
+def describe_error(exc: Exception, arena_url: str, timeout_seconds: float) -> str:
     if isinstance(exc, openai.APIStatusError):
         code = exc.status_code
         msg = f"arena2api returned {code}"
@@ -65,7 +74,7 @@ def describe_error(exc: Exception, arena_url: str) -> str:
             msg += f" - {HINT_503}"
         return msg
     if isinstance(exc, openai.APITimeoutError):
-        return f"arena2api request timed out after {settings.ARENA_REQUEST_TIMEOUT_SECONDS:g}s"
+        return f"arena2api request timed out after {timeout_seconds:g}s"
     if isinstance(exc, openai.APIConnectionError):
         return f"could not reach arena2api at {arena_url} - is it running?"
     return f"{type(exc).__name__}: {exc}"
@@ -86,6 +95,7 @@ def start(db, job_id: str) -> None:
         if _tasks.get(job_id) is task:
             _tasks.pop(job_id, None)
         _stop_requested.discard(job_id)
+        _notify_end()
 
     task.add_done_callback(_cleanup)
 
@@ -156,6 +166,7 @@ async def mark_stopped(db, job_id: str, reason: str) -> bool:
     }})
     where = f" at step {running['index']}" if running else " between steps"
     await append_log(db, job_id, "warn", f"Job stopped{where} by {reason} - later steps left pending")
+    _notify_end()
     return True
 
 
@@ -171,7 +182,10 @@ async def _mark_shutdown(db, job_id: str) -> None:
 async def run_job(db, job_id: str) -> None:
     job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     steps = await db.steps.find({"job_id": job_id}, {"_id": 0}).sort("index", 1).to_list(None)
-    client = ArenaClient(job["arena_url"], job["model"], settings.ARENA_REQUEST_TIMEOUT_SECONDS)
+    # Current runtime settings (Mongo) apply to every new run, including resumes.
+    cfg = await app_settings.get(db)
+    delay, timeout = float(cfg["step_delay_seconds"]), float(cfg["request_timeout_seconds"])
+    client = ArenaClient(job["arena_url"], job["model"], timeout)
     files: dict[str, int] = {}
 
     # Resume support: replay finished steps into the chat history and file list.
@@ -184,9 +198,11 @@ async def run_job(db, job_id: str) -> None:
     if done_steps:
         await append_log(db, job_id, "info", f"Rebuilt history from {len(done_steps)} done step(s) "
                                              f"({len(client.history)} messages, {len(files)} files); "
-                                             f"model {job['model']}, arena2api {job['arena_url']}")
+                                             f"model {job['model']}, arena2api {job['arena_url']}, "
+                                             f"step delay {delay:g}s, timeout {timeout:g}s")
     else:
-        await append_log(db, job_id, "info", f"Job started: {len(steps)} steps, model {job['model']}, arena2api {job['arena_url']}")
+        await append_log(db, job_id, "info", f"Job started: {len(steps)} steps, model {job['model']}, arena2api {job['arena_url']}, "
+                                             f"step delay {delay:g}s, timeout {timeout:g}s")
     try:
         for step in todo:
             idx = step["index"]
@@ -201,7 +217,7 @@ async def run_job(db, job_id: str) -> None:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - every failure ends the job
-                message = describe_error(exc, job["arena_url"])
+                message = describe_error(exc, job["arena_url"], timeout)
                 ts = now_iso()
                 await db.steps.update_one(
                     {"job_id": job_id, "index": idx},
@@ -239,8 +255,8 @@ async def run_job(db, job_id: str) -> None:
             if extras:
                 note += f" ({'; '.join(extras)})"
             await append_log(db, job_id, "ok", f"Step {idx} done - {note}")
-            if idx < len(steps) and settings.ARENA_STEP_DELAY_SECONDS > 0:
-                await asyncio.sleep(settings.ARENA_STEP_DELAY_SECONDS)
+            if idx < len(steps) and delay > 0:
+                await asyncio.sleep(delay)
 
         ts = now_iso()
         await db.jobs.update_one({"id": job_id, "status": "running"},
