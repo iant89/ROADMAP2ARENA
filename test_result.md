@@ -35,6 +35,9 @@ Notes:
 | F-001 | MAJOR | Frontend StartForm validation | Empty/whitespace model only disables Start job silently; no error message explains why (expected a clear error) | VERIFIED |
 | F-002 | MINOR | Frontend App URL state | Starting/opening a job does not put ?job=<id> in the URL, so a reload drops back to the empty form (job still reachable via Recent jobs) | SKIPPED |
 | B-003 | CRITICAL | POST /api/jobs/{id}/stop | Concurrent stop calls on a running job (4 parallel) all return 200 with status "running"; job and step stay "running" with no task (no stop log line), blocking every new job until stop is called again. Repeat cancel() in orchestrator.stop interrupts the CancelledError handler/mark_stopped in run_job | VERIFIED |
+| F-003 | MAJOR | Frontend HistoryDetail (mobile 390px) | Job detail tab bar (Transcript/Files/Steps/Log) is not wrapped in a horizontal scroller, so the history detail page is ~474px wide at 390px: page scrolls sideways, Log tab starts off-screen and the touch-emulated click on it failed (intercepted) | OPEN |
+| F-004 | MINOR | Frontend useJob / history deep link | ?tab=history&job=<unknown id> shows a "Lost contact with the backend ... retrying automatically" toast for a plain 404 (nothing is retried; the inline "Could not load job ... not found" message is correct) | OPEN |
+| F-005 | MINOR | Frontend api.listJobs / HistoryPanel | listJobs() drops queue_position from GET /api/jobs, so the history list never shows the "#N in queue" hint for queued jobs | OPEN |
 
 ## Test Log
 
@@ -158,3 +161,40 @@ Settings: original values equal the .env defaults; reset with POST /api/settings
 Notes: a %2F in the URL path (/files%2Fdownload) is decoded by the server and served by the normal route (only the job's own file), so this is not a bug. One test-file edit between runs triggered a uvicorn reload while no job was running.
 Not tested: backend restart with queued/running jobs; request-timeout expiry; real arena2api.
 
+### Frontend test run - 2026-10-01 21:54 ET
+Tester: frontend testing agent
+Scope: Full e2e of the tabbed dashboard (feat/history-panel, PR #4) at http://localhost:8080 in headless Chromium, desktop 1280x800 and mobile 390x844 (is_mobile + touch), real backend + :9090 stand-in. Every tab (Create, Job queue order/move up/down/pause/unpause/remove, Current job, Job history, Settings save/reset/persistence); Current job auto pick-up and reset to "Waiting for next job"; history panel collapse/expand + localStorage persistence; status badges; ?tab=history&job=<id> deep links (valid, invalid, reload; mobile back bar); job detail transcript, HTML export, per-file view/download, ZIP; Clone (prefill, edits, enqueue with cloned_from). Script: /app/frontend/tests/e2e_history.py (probes: mobile_probe.py, mobile_probe2.py, probe_badlink.py), state kept in /tmp. The Test Request says to put scripts in /app/backend/tests/, but the requester asked for /app/frontend/tests/. That is also safer, because the backend runs uvicorn --reload over that folder. No route interception needed. Settings were recorded first and restored afterwards (same four values, updated_at is new). 22 test jobs (test_xjqtf...) were removed from Mongo by id; no job delete API/UI exists (queue Remove only cancels).
+Result: FAIL
+Flows:
+desktop tabs (incl. unknown route, ?tab=bogus) - PASS
+desktop create_validation - PASS
+desktop settings - PASS
+desktop queue - PASS
+desktop pickup - PASS
+desktop stop_error - PASS
+desktop badges - PASS
+desktop panel_collapse - PASS
+desktop deep_link - PASS
+desktop detail - PASS
+desktop clone - PASS
+mobile clickables/overflow on top-level tabs - PASS
+mobile tabs - PASS
+mobile create_validation - PASS
+mobile settings - PASS
+mobile queue - PASS
+mobile pickup - PASS
+mobile stop_error - PASS
+mobile badges - PASS
+mobile panel_collapse - PASS
+mobile deep_link (incl. All jobs back bar, browser back) - PASS
+mobile detail - FAIL (transcript, export, file download, ZIP and Steps passed; Log tab click failed)
+mobile clone - PASS
+Failures:
+- [F-003][MAJOR] mobile detail, click Log tab in job detail (mobile only) - expected all four detail tabs inside the 390px viewport and clickable vs actual document is 474px wide (tabs-list right edge 474px, Log tab 370-472px), page scrolls sideways and the touch click on Log timed out (pointer intercepted) twice - HistoryDetail.jsx TabsList has no overflow-x-auto wrapper (the main tab bar in App.jsx has one). Screenshots /tmp/frontend-test/mobile_detail.png, mobile_detail_tabs_mobile.png
+- [F-004][MINOR] deep_link, unknown job id - expected only the not-found message vs actual extra toast "Lost contact with the backend ... retrying automatically" - useJob.js shows that toast for every error including 404. Screenshot /tmp/frontend-test/desktop_deep_link_invalid.png
+- [F-005][MINOR] history list, queued job row - expected "#N in queue" vs actual never shown - api.js listJobs() mapping omits queue_position
+Console errors: "Failed to load resource" 404 x15 (expected: invalid-id deep links), 422 x3 (expected: roadmap/parse with no steps). No page exceptions, no React warnings.
+Network failures: None (no requestfailed, no CORS errors, no wrong host, no missing /api prefix; only external requests are Google Fonts). /api >=400 only the expected 404/422 above.
+Retested: none (no Retest items, no FIXED issues; F-002 stays SKIPPED)
+Not tested: Resume/Restart controls beyond their presence; stub-503-once-at-N and stub-slow-at-N; arena-stub restart (not allowed); real arena2api. The brief "Waiting for next job" state between two queued jobs (~1 s, 2 s queue poll) was not caught by the sampler; the reset was confirmed after the last job and after a stop, and the automatic hand-over A -> C -> B was seen on desktop and mobile.
+Status list (status.jsx STATUS_META): pending, running, done (Completed), error (Failed), stopped, queued, paused, cancelled, idle; all 7 job statuses (Queued, Running, Paused, Completed, Failed, Stopped, Cancelled) were produced and their badges seen in the history list and filter chips.

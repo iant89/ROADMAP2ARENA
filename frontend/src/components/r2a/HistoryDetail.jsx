@@ -96,7 +96,7 @@ export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueCh
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0">
-        <div className="border-b border-border px-5 py-2.5 lg:px-7">
+        <div className="min-w-0 overflow-x-auto border-b border-border px-5 py-2.5 lg:px-7">
           <TabsList className="h-9 bg-secondary">
             <TabsTrigger value="transcript" data-testid="detail-tab-transcript" className="px-3"><MessagesSquare /> Transcript <Count n={turns} /></TabsTrigger>
             <TabsTrigger value="files" data-testid="detail-tab-files" className="px-3"><FolderTree /> Files <Count n={job.artifacts.length} /></TabsTrigger>
