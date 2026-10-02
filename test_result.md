@@ -11,12 +11,12 @@
 ## Test Request
 
 Agent: backend
-Date: 2026-10-01 19:59 ET
+Date: 2026-10-01 20:03 ET
 Built or changed: FastAPI backend for ROADMAP2ARENA (jobs, steps, orchestrator, arena2api client, artifact extractor, ZIP), MongoDB persistence
 Key endpoints or flows: GET /api/config, POST /api/roadmap/parse, POST /api/jobs, GET /api/jobs, GET /api/jobs/{id}, GET /api/jobs/{id}/steps/{index}, GET /api/jobs/{id}/download
 Data: real backend
 Features present: sessions no (but each job has its own conversation and artifacts; jobs must never mix), auth no, integrations: arena2api via local stand-in only
-Retest: none
+Retest: B-001, B-002
 Test accounts: none
 Notes:
 - arena2api is replaced by a LOCAL stand-in (backend/tests/arena_stub.py, supervisor program arena-stub) on http://127.0.0.1:9090. Magic models: stub-503 (HTTP 503 on every call), stub-503-at-3 (503 on the 3rd user turn only; any stub-503-at-N works), stub-slow (sleeps 5 s per call, for 409 testing). Any other model gets turn-based canned replies containing a lang:path block, a "# filename:" block, an unnamed block, "../evil.py" and "/abs/x.py".
@@ -29,6 +29,20 @@ Notes:
 
 | ID | Severity | Area | Summary | Status |
 |----|----------|------|---------|--------|
+| B-001 | CRITICAL | GET /api/jobs/{id}/steps/{index} | index > 2^63-1 (e.g. 99999999999999999999999) returns 500; OverflowError from pymongo in server.py get_step | FIXED |
+| B-002 | MAJOR | POST /api/jobs | One-job-at-a-time rule is racy: 5 concurrent POSTs all returned 201 and 5 jobs ran at once (expected one 201 + four 409); check-then-insert in server.py create_job | FIXED |
 
 ## Test Log
+
+### Backend test run - 2026-10-01 20:01 ET
+Tester: backend testing agent
+Scope: All 7 /api endpoints on http://127.0.0.1:8001 (+1 request via Caddy :8080): config, roadmap parse, job create/list/get, step detail, ZIP download; job lifecycle with local stub (gpt-4o, stub-503, stub-503-at-3, stub-slow, unreachable arena); response shape vs contracts.md, no _id, UUID4 ids, ISO-8601 Z timestamps; 422 validation (bad URL, empty/whitespace model, empty/no-step roadmap, wrong types, bad JSON); 404 unknown/malformed ids and step index; 405/404 routes; 409 second job and 409 download without artifacts; ZIP rules (unnamed blocks excluded, ../ skipped and logged, /abs stripped, latest version wins); unicode/emoji/long input; concurrent job creation. Suite: /app/backend/tests/test_backend_api.py (runner run_tests.py; pytest/requests not installed, httpx used). All test jobs deleted afterwards.
+Result: FAIL
+Passed: 18   Failed: 2
+Failures:
+- [B-001][CRITICAL] GET /api/jobs/{id}/steps/99999999999999999999999 - expected 404 (or 422) vs actual 500 Internal Server Error - index is an unbounded Python int passed to Mongo find_one in server.py get_step (OverflowError: MongoDB can only handle up to 8-byte ints)
+- [B-002][MAJOR] POST /api/jobs (5 concurrent requests, stub-slow) - expected one 201 and four 409 vs actual five 201, five jobs running at once - server.py create_job checks orchestrator.is_running()/find_one then awaits inserts before orchestrator.start, so concurrent requests all pass the check
+Retested: none (no Retest items or FIXED issues)
+Not tested: backend restart mid-job ("interrupted by server restart") - restarting a running backend is not allowed for the tester; 500-entry log cap; real arena2api.
+Severity note: CRITICAL here corresponds to BLOCKER in the protocol scale.
 

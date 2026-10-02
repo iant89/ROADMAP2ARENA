@@ -1,6 +1,7 @@
 """ROADMAP2ARENA backend: FastAPI app, all routes under /api."""
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import uuid
@@ -28,6 +29,10 @@ mongo = AsyncIOMotorClient(settings.MONGO_URL)
 db = mongo[settings.DB_NAME]
 
 INTERRUPTED = "interrupted by server restart"
+# Upper bound for step indexes in URLs; keeps values inside Mongo's 64-bit int range.
+MAX_STEP_INDEX = 100_000
+# Serialises the running-job check + insert + task start (single uvicorn process).
+_job_start_lock = asyncio.Lock()
 
 
 @asynccontextmanager
@@ -122,22 +127,23 @@ async def parse(body: ParseRequest):
 @api.post("/jobs", status_code=201)
 async def create_job(body: JobCreate):
     arena_url, model, steps = validate_job_input(body)
-    if orchestrator.is_running() or await db.jobs.find_one({"status": "running"}, {"_id": 1}):
-        raise HTTPException(status_code=409, detail="A job is already running - wait for it to finish")
-    job_id = str(uuid.uuid4())
-    ts = now_iso()
-    await db.jobs.insert_one({
-        "id": job_id, "status": "running", "created_at": ts, "updated_at": ts, "finished_at": None,
-        "arena_url": arena_url, "model": model, "project_context": body.project_context,
-        "roadmap_md": body.roadmap_md, "title": roadmap_title(body.roadmap_md) or steps[0]["title"],
-        "step_total": len(steps), "steps_done": 0, "error": None, "failed_step": None, "log": [],
-    })
-    await db.steps.insert_many([{
-        "job_id": job_id, "index": s["index"], "title": s["title"], "description": s["description"],
-        "status": "pending", "prompt": "", "response": "", "error": None, "artifacts": [],
-        "started_at": None, "finished_at": None,
-    } for s in steps])
-    orchestrator.start(db, job_id)
+    async with _job_start_lock:
+        if orchestrator.is_running() or await db.jobs.find_one({"status": "running"}, {"_id": 1}):
+            raise HTTPException(status_code=409, detail="A job is already running - wait for it to finish")
+        job_id = str(uuid.uuid4())
+        ts = now_iso()
+        await db.jobs.insert_one({
+            "id": job_id, "status": "running", "created_at": ts, "updated_at": ts, "finished_at": None,
+            "arena_url": arena_url, "model": model, "project_context": body.project_context,
+            "roadmap_md": body.roadmap_md, "title": roadmap_title(body.roadmap_md) or steps[0]["title"],
+            "step_total": len(steps), "steps_done": 0, "error": None, "failed_step": None, "log": [],
+        })
+        await db.steps.insert_many([{
+            "job_id": job_id, "index": s["index"], "title": s["title"], "description": s["description"],
+            "status": "pending", "prompt": "", "response": "", "error": None, "artifacts": [],
+            "started_at": None, "finished_at": None,
+        } for s in steps])
+        orchestrator.start(db, job_id)
     return {"job_id": job_id}
 
 
@@ -178,6 +184,8 @@ async def get_job(job_id: str):
 @api.get("/jobs/{job_id}/steps/{index}")
 async def get_step(job_id: str, index: int):
     await get_job_or_404(job_id)
+    if not 1 <= index <= MAX_STEP_INDEX:
+        raise HTTPException(status_code=404, detail=f"Step {index} of job {job_id} not found")
     step = await db.steps.find_one({"job_id": job_id, "index": index}, {"_id": 0})
     if not step:
         raise HTTPException(status_code=404, detail=f"Step {index} of job {job_id} not found")
