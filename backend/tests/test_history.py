@@ -14,7 +14,7 @@ import traceback
 import httpx
 
 BASE = os.environ.get("TEST_BASE_URL", "http://127.0.0.1:8001").rstrip("/") + "/api"
-STUB = "http://127.0.0.1:9090"
+STUB = os.environ.get("TEST_STUB_URL", "http://127.0.0.1:9090")
 TAG = f"test_hist_{secrets.token_hex(3)}"
 CREATED: list[str] = []
 S: dict = {}

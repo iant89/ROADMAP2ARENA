@@ -1,6 +1,7 @@
 """Minimal runner (pytest not installed): runs test_* functions in file order, retries a failure once."""
 import importlib.util, sys, time, traceback
-spec = importlib.util.spec_from_file_location("t", "/app/backend/tests/test_backend_api.py")
+import os
+spec = importlib.util.spec_from_file_location("t", os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_backend_api.py"))
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 names = [n for n in m.__dict__ if n.startswith("test_") and callable(m.__dict__[n])]
 only = sys.argv[1:]

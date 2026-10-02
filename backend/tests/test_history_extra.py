@@ -19,8 +19,8 @@ import uuid
 import httpx
 
 BASE = os.environ.get("TEST_BASE_URL", "http://127.0.0.1:8001").rstrip("/") + "/api"
-DIRECT = "http://127.0.0.1:8001/api"
-STUB = "http://127.0.0.1:9090"
+DIRECT = os.environ.get("TEST_DIRECT_URL", "http://127.0.0.1:8001/api")
+STUB = os.environ.get("TEST_STUB_URL", "http://127.0.0.1:9090")
 SUFFIX = secrets.token_hex(3)
 CREATED: list[str] = []
 S: dict = {}

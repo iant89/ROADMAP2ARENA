@@ -25,6 +25,10 @@ from deletion_routes import router as deletion_router
 from history_routes import router as history_router
 from notification_routes import router as notification_router
 import notifier
+import deletion_routes
+import git_integration
+import repos
+from git_integration import router as git_router
 from queue_routes import queue_state, router as queue_router
 from roadmap_parser import parse_roadmap, roadmap_title
 
@@ -49,8 +53,14 @@ async def lifespan(_: FastAPI):
     await db.notifications.create_index([("id", ASCENDING)], unique=True)
     await db.notifications.create_index([("created_at", DESCENDING)])
     await app_settings.seed(db, now_iso())
+    await repos.ensure_indexes(db)
     if notifier.on_job_finished not in orchestrator.on_job_finished:
         orchestrator.on_job_finished.append(notifier.on_job_finished)
+    for hooks, cb in ((orchestrator.on_run_start, git_integration.on_run_start),
+                      (orchestrator.on_step_done, git_integration.on_step_done),
+                      (deletion_routes.on_delete, git_integration.on_delete)):
+        if cb not in hooks:
+            hooks.append(cb)
     stale = await db.jobs.find({"status": "running"}, {"_id": 0, "id": 1}).to_list(None)
     for job in stale:
         ts = now_iso()
@@ -148,6 +158,9 @@ async def insert_job(arena_url: str, model: str, project_context: str, roadmap_m
         "roadmap_md": roadmap_md, "title": roadmap_title(roadmap_md) or steps[0]["title"],
         "step_total": len(steps), "steps_done": 0, "error": None, "failed_step": None,
         "stopped_step": None, "restarted_from": restarted_from, "cloned_from": cloned_from, "log": [],
+        # project_id: owning project (planned "Projects" feature, None = standalone job);
+        # repo_id: the job's own git repo (repos collection), set when it is created.
+        "project_id": None, "repo_id": None,
     })
     await db.steps.insert_many([{
         "job_id": job_id, "index": s["index"], "title": s["title"], "description": s["description"],
@@ -205,7 +218,7 @@ async def create_job(body: JobCreate):
     return {"job_id": job_id, **state}
 
 
-LIST_FIELDS = ("status", "created_at", "step_total", "steps_done", "title", "model", "failed_step", "stopped_step",
+LIST_FIELDS = ("project_id", "status", "created_at", "step_total", "steps_done", "title", "model", "failed_step", "stopped_step",
                "restarted_from", "cloned_from", "queue_position", "queued_at", "started_at", "finished_at")
 
 
@@ -237,6 +250,8 @@ async def get_job(job_id: str):
         "stopped_step": job.get("stopped_step"),
         "restarted_from": job.get("restarted_from"),
         "cloned_from": job.get("cloned_from"),
+        "project_id": job.get("project_id"),
+        "repo_id": job.get("repo_id"),
         "queue_position": job.get("queue_position"),
         "queued_at": job.get("queued_at"),
         "started_at": job.get("started_at"),
@@ -253,6 +268,7 @@ async def get_job(job_id: str):
             "index": s["index"], "title": s["title"], "description": s.get("description", ""),
             "status": s["status"], "error": s.get("error"),
             "artifact_paths": [a["path"] for a in s.get("artifacts", [])],
+            "commit_sha": s.get("commit_sha"),
         } for s in steps],
         "log": job.get("log", []),
     }
@@ -332,7 +348,7 @@ async def resume_job(job_id: str, body: JobOverrides | None = None):
         k = first["index"]
         ts = now_iso()
         await db.steps.update_many({"job_id": job_id, "index": {"$gte": k}}, {"$set": {
-            "status": "pending", "prompt": "", "response": "", "artifacts": [], "error": None,
+            "status": "pending", "prompt": "", "response": "", "artifacts": [], "error": None, "commit_sha": None,
             "started_at": None, "finished_at": None,
         }})
         done = await db.steps.count_documents({"job_id": job_id, "status": "done"})
@@ -388,3 +404,4 @@ app.include_router(queue_router)
 app.include_router(history_router)
 app.include_router(deletion_router)
 app.include_router(notification_router)
+app.include_router(git_router)
