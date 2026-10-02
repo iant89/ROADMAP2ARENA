@@ -237,6 +237,16 @@ def test_step_404_and_bad_index():
     assert c.get(f"{BASE}/jobs/{jid}/steps/99999999999999999999999").status_code in (404, 422)
 
 
+def test_b001_step_index_boundaries():
+    jid = STATE["happy"]
+    assert c.get(f"{BASE}/jobs/{jid}/steps/1").status_code == 200
+    for idx in ("0", "100000", "100001", str(2**63 - 1), str(2**63), str(2**64), "99999999999999999999999",
+                "-" + str(2**63 + 1)):
+        r = c.get(f"{BASE}/jobs/{jid}/steps/{idx}")
+        assert r.status_code == 404, (idx, r.status_code, r.text[:100])
+        assert "detail" in r.json()
+
+
 def test_download_zip_rules():
     jid = STATE["happy"]
     r = c.get(f"{BASE}/jobs/{jid}/download")
@@ -323,7 +333,7 @@ def test_second_job_409_while_running():
 
 def test_concurrent_create_only_one_wins():
     results = []
-    barrier = threading.Barrier(5)
+    barrier = threading.Barrier(6)
 
     def go(i):
         cl = httpx.Client(timeout=20)
@@ -331,16 +341,19 @@ def test_concurrent_create_only_one_wins():
         results.append(cl.post(f"{BASE}/jobs", json={"arena_url": STUB, "model": "stub-slow",
                                                      "roadmap_md": roadmap(1, f"race{i}")}))
 
-    ts = [threading.Thread(target=go, args=(i,)) for i in range(5)]
+    ts = [threading.Thread(target=go, args=(i,)) for i in range(6)]
     [t.start() for t in ts]
     [t.join() for t in ts]
     ok = [r for r in results if r.status_code == 201]
     for r in ok:
         CREATED.append(r.json()["job_id"])
     codes = sorted(r.status_code for r in results)
+    running = [j for j in c.get(f"{BASE}/jobs").json() if j["status"] == "running"]
     wait_all()
     assert len(ok) == 1, f"expected exactly one 201, got {codes}"
-    assert codes.count(409) == 4
+    assert codes.count(409) == 5, codes
+    assert [j["job_id"] for j in running] == [ok[0].json()["job_id"]], running
+    assert wait(ok[0].json()["job_id"])["status"] == "done"
 
 
 # ---------------------------------------------------------------- cleanup

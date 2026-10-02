@@ -29,8 +29,8 @@ Notes:
 
 | ID | Severity | Area | Summary | Status |
 |----|----------|------|---------|--------|
-| B-001 | CRITICAL | GET /api/jobs/{id}/steps/{index} | index > 2^63-1 (e.g. 99999999999999999999999) returns 500; OverflowError from pymongo in server.py get_step | FIXED |
-| B-002 | MAJOR | POST /api/jobs | One-job-at-a-time rule is racy: 5 concurrent POSTs all returned 201 and 5 jobs ran at once (expected one 201 + four 409); check-then-insert in server.py create_job | FIXED |
+| B-001 | CRITICAL | GET /api/jobs/{id}/steps/{index} | index > 2^63-1 (e.g. 99999999999999999999999) returns 500; OverflowError from pymongo in server.py get_step | VERIFIED |
+| B-002 | MAJOR | POST /api/jobs | One-job-at-a-time rule is racy: 5 concurrent POSTs all returned 201 and 5 jobs ran at once (expected one 201 + four 409); check-then-insert in server.py create_job | VERIFIED |
 
 ## Test Log
 
@@ -45,4 +45,16 @@ Failures:
 Retested: none (no Retest items or FIXED issues)
 Not tested: backend restart mid-job ("interrupted by server restart") - restarting a running backend is not allowed for the tester; 500-entry log cap; real arena2api.
 Severity note: CRITICAL here corresponds to BLOCKER in the protocol scale.
+
+### Backend test run - 2026-10-01 20:04 ET
+Tester: backend testing agent
+Scope: Retest of B-001 and B-002, then full regression of all 7 /api endpoints (same suite as the previous run, plus a B-001 boundary test; concurrency test raised to 6 parallel POSTs and now also checks that only one job is running). Suite: /app/backend/tests/test_backend_api.py, runner run_tests.py. All test jobs deleted afterwards.
+Result: PASS
+Passed: 21   Failed: 0
+Failures: none
+Retested:
+- B-001 VERIFIED: GET /api/jobs/{id}/steps/{index} returns 200 for index 1 and 404 for 0, 100000, 100001, 2^63-1, 2^63, 2^64, 99999999999999999999999 and -(2^63+1); no 500s.
+- B-002 VERIFIED: 6 concurrent POST /api/jobs (stub-slow) returned exactly one 201 and five 409; only that one job showed as running, and it finished done.
+Not tested: backend restart mid-job ("interrupted by server restart"); 500-entry log cap; real arena2api.
+Note: the backend runs with uvicorn --reload watching /app/backend including tests/, so editing a test file reloaded the backend (StatReload in the log). No job was running at the time, but such a reload would interrupt a running job.
 
