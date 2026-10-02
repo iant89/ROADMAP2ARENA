@@ -23,6 +23,8 @@ from database import db, mongo
 from orchestrator import append_log, now_iso
 from deletion_routes import router as deletion_router
 from history_routes import router as history_router
+from notification_routes import router as notification_router
+import notifier
 from queue_routes import queue_state, router as queue_router
 from roadmap_parser import parse_roadmap, roadmap_title
 
@@ -44,7 +46,11 @@ async def lifespan(_: FastAPI):
     await db.jobs.create_index([("created_at", DESCENDING)])
     await db.jobs.create_index([("status", ASCENDING), ("queue_position", ASCENDING)])
     await db.steps.create_index([("job_id", ASCENDING), ("index", ASCENDING)], unique=True)
+    await db.notifications.create_index([("id", ASCENDING)], unique=True)
+    await db.notifications.create_index([("created_at", DESCENDING)])
     await app_settings.seed(db, now_iso())
+    if notifier.on_job_finished not in orchestrator.on_job_finished:
+        orchestrator.on_job_finished.append(notifier.on_job_finished)
     stale = await db.jobs.find({"status": "running"}, {"_id": 0, "id": 1}).to_list(None)
     for job in stale:
         ts = now_iso()
@@ -381,3 +387,4 @@ app.include_router(api)
 app.include_router(queue_router)
 app.include_router(history_router)
 app.include_router(deletion_router)
+app.include_router(notification_router)

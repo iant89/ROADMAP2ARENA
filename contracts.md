@@ -36,6 +36,15 @@ FastAPI's `{"detail": "..."}` shape.
 | GET | `/api/jobs/{id}/files/download?path=<p>&step=<n>` | `text/plain; charset=utf-8` attachment (file name = basename); latest version, or the version from step n | 404 job/file/version; 422 missing path, step outside 1..100000 |
 | GET | `/api/jobs/{id}/clone-source` | `{source_job_id,title,arena_url,model,project_context,roadmap_md,step_total}` for the prefilled Clone form | 404 |
 | GET | `/api/jobs/{id}/download` | `application/zip`, latest version per path | 404 unknown job; 409 no artifacts |
+| GET | `/api/notifications?limit=1..200&unread=bool` | `{items:[{id,event,job_id,title,status,step,message,url,created_at,read,deliveries}], unread_count, total}` newest first (default limit 50) | 422 bad limit/unread |
+| POST | `/api/notifications/{id}/read` | `{id, read:true, unread_count}` | 404 |
+| POST | `/api/notifications/read-all` | `{updated, unread_count:0}` | - |
+| DELETE | `/api/notifications/{id}` | `{id, deleted:true}` | 404 |
+| DELETE | `/api/notifications` | clear all: `{deleted, unread_count:0}` | - |
+| GET | `/api/notifications/settings` | `{app_url, in_app:{events}, webhook:{enabled,url,events}, email:{enabled,host,port,security,username,from_addr,to_addrs,events,password_set,password_masked}, updated_at}` - the SMTP password is NEVER returned | - |
+| PUT | `/api/notifications/settings` partial deep merge | same shape as GET | 422 unknown key, app_url/webhook.url not http(s), webhook enabled without url, port not int 1-65535, security not starttls/ssl/none, invalid from/to address, email enabled without host/from/to, events with unknown keys/non-bool, bad host |
+| POST | `/api/notifications/test/webhook` body `{url?}` (optional, not saved) | `{ok, status_code, error, url}` - sends an `event:"test"` payload even if the webhook is disabled | 422 no url / bad url |
+| POST | `/api/notifications/test/email` body = optional unsaved email fields (password omitted/masked = saved one) | `{ok, error, to_addrs}` | 422 invalid fields |
 
 Statuses: job `queued|paused|running|done|error|stopped|cancelled`; step `pending|running|done|error|stopped`.
 Finished (history) = `done|error|stopped|cancelled`; resumable = `error|stopped|cancelled`.
@@ -89,6 +98,36 @@ UI labels: done = "Completed", error = "Failed", queued = "Queued" (not started 
 - Startup recovery still turns running jobs into error "interrupted by server
   restart"; such jobs are resumable.
 Log levels: `info|ok|warn|error`; the job keeps the last 500 entries.
+
+### Notifications (backend/notifier.py, notify_settings.py, notification_routes.py)
+
+- Events: `job_done`, `job_failed`, `job_stopped` (orchestrator `on_job_finished` hook, fired once
+  when a run ends done/error/stopped) and `queue_empty` (right after a job ends, when no job is
+  queued or running; paused jobs don't count and are mentioned: "(1 paused job left)").
+  Server-restart interruptions and cancels do not notify.
+- Channels with per-event toggles: `in_app` (stored in Mongo `notifications`, last 500 kept ->
+  bell, toasts and browser notifications), `webhook`, `email`. Defaults: in-app all on; webhook
+  off (all events on); email off (done + failed on).
+- Webhook: `POST <url>` JSON `{event, job_id, title, status, step, message, url, timestamp, app,
+  text, content}`; `text` (Slack) = `content` (Discord, max 1900 chars) = emoji + message + link.
+  `step` = step_total (done), failed_step (failed), stopped_step (stopped), null (queue empty).
+  `url` = `<app_url>/?tab=history&job=<id>` (queue empty: `?tab=queue`). 10 s timeout, 2xx = ok.
+- Email: SMTP via smtplib in a worker thread (15 s timeout), security `starttls` (requires the
+  server's STARTTLS), `ssl` or `none`; login only if a username is set. Subject
+  `[ROADMAP2ARENA] Job finished: <title>`, plain-text body with the link.
+- Delivery results are written to the job log (`Notification: webhook delivered (HTTP 200)` /
+  `Notification: email failed - ...`, level warn) and to the notification's `deliveries`. Failures
+  never change the job or the queue.
+- The SMTP password is stored server-side and is write-only: GET returns `password_set` and
+  `password_masked` (`********`); PUT `password` omitted or `********` = keep, `""` = clear.
+- Notifications of a deleted job are kept (their link then shows "Could not load job").
+- UI: bell in the header (unread badge, panel with mark read / mark all read / remove / Clear
+  (two-click)); clicking an item marks it read and opens the job (or the queue). New
+  notifications appear as toasts (they replace the old queue-poll "Job finished"/"failed"
+  toasts). Browser notifications: Settings toggle, per browser (localStorage
+  `r2a.browserNotifications`), shown only while the tab is hidden/unfocused and permission is
+  granted. Settings > Notifications: event x channel matrix, webhook URL + Send test, SMTP
+  fields + Send test, app URL.
 
 ### Cancel vs delete
 

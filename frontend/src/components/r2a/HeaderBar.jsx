@@ -1,9 +1,10 @@
 import { ListOrdered, Route } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
+import NotificationBell from './NotificationBell'
 import { StatusChip } from './status'
 
 // Status badge + progress of the running job (from GET /api/queue), plus the queue size.
-export default function HeaderBar({ running, queueCount, onOpenCurrent, onOpenQueue }) {
+export default function HeaderBar({ running, queueCount, onOpenCurrent, onOpenQueue, notifications }) {
   const done = running?.steps_done ?? 0
   const total = running?.step_total ?? 0
   const pct = total ? Math.round((done / total) * 100) : 0
@@ -11,7 +12,7 @@ export default function HeaderBar({ running, queueCount, onOpenCurrent, onOpenQu
   return (
     <header className="border-b border-border bg-card">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2.5 px-5 py-3 sm:gap-y-3 sm:py-3.5 lg:px-8">
-        <div className="flex items-center gap-3">
+        <div className="order-1 flex items-center gap-3">
           <span className="grid size-9 place-items-center rounded-lg bg-primary text-primary-foreground">
             <Route className="size-5" />
           </span>
@@ -22,7 +23,14 @@ export default function HeaderBar({ running, queueCount, onOpenCurrent, onOpenQu
         </div>
 
         {/* Status row: chip, running job name + progress, queue size. On mobile it is one full-width row. */}
-        <div className="flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-0 sm:gap-6" data-testid="header-status-row">
+        {/* Bell: next to the logo on mobile, at the end of the status row on desktop. */}
+        {notifications && (
+          <div className="order-2 ml-auto sm:order-3 sm:ml-0">
+            <NotificationBell notifications={notifications} />
+          </div>
+        )}
+
+        <div className="order-3 flex min-w-0 flex-1 basis-full items-center gap-2 sm:order-2 sm:basis-0 sm:gap-6" data-testid="header-status-row">
           <button type="button" onClick={onOpenCurrent} className="shrink-0 rounded-full" aria-label="Open current job">
             <StatusChip status={running ? 'running' : 'idle'} />
           </button>

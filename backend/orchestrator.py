@@ -16,7 +16,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from typing import Callable
+from typing import Awaitable, Callable
 
 import openai
 
@@ -38,11 +38,28 @@ _stop_ops: dict[str, tuple[asyncio.Task, asyncio.Task]] = {}
 STOP_WAIT_SECONDS = 10
 # Called when a job may have finished (set by the scheduler to wake the queue worker).
 on_job_end: Callable[[], None] | None = None
+# Async callbacks (db, job_id, status) run after a job reached done / error / stopped
+# (e.g. notifications). Each runs in its own task; failures are logged and never affect the job.
+on_job_finished: list[Callable[[object, str, str], Awaitable[None]]] = []
+_finish_tasks: set[asyncio.Task] = set()
 
 
 def _notify_end() -> None:
     if on_job_end:
         on_job_end()
+
+
+def emit_finished(db, job_id: str, status: str) -> None:
+    """Schedule the on_job_finished callbacks (fire and forget, shielded from the job task)."""
+    for cb in on_job_finished:
+        async def _run(cb=cb) -> None:
+            try:
+                await cb(db, job_id, status)
+            except Exception:  # noqa: BLE001 - never let a listener break a job
+                logger.exception("on_job_finished callback failed for job %s", job_id)
+        t = asyncio.create_task(_run(), name=f"finished-{job_id}")
+        _finish_tasks.add(t)
+        t.add_done_callback(_finish_tasks.discard)
 
 
 def now_iso() -> str:
@@ -166,6 +183,7 @@ async def mark_stopped(db, job_id: str, reason: str) -> bool:
     }})
     where = f" at step {running['index']}" if running else " between steps"
     await append_log(db, job_id, "warn", f"Job stopped{where} by {reason} - later steps left pending")
+    emit_finished(db, job_id, "stopped")
     _notify_end()
     return True
 
@@ -231,6 +249,7 @@ async def run_job(db, job_id: str) -> None:
                 await append_log(db, job_id, "error", f"Step {idx} failed: {message}")
                 if len(steps) > idx:
                     await append_log(db, job_id, "error", f"Job stopped - steps {idx + 1}-{len(steps)} left pending")
+                emit_finished(db, job_id, "error")
                 return
 
             artifacts = [{"path": p, "content": c} for p, c in extract_artifacts(response).items()]
@@ -259,9 +278,11 @@ async def run_job(db, job_id: str) -> None:
                 await asyncio.sleep(delay)
 
         ts = now_iso()
-        await db.jobs.update_one({"id": job_id, "status": "running"},
-                                 {"$set": {"status": "done", "finished_at": ts, "updated_at": ts}})
+        res = await db.jobs.update_one({"id": job_id, "status": "running"},
+                                       {"$set": {"status": "done", "finished_at": ts, "updated_at": ts}})
         await append_log(db, job_id, "ok", f"Job finished - {len(steps)}/{len(steps)} steps, {len(files)} files")
+        if res.modified_count:
+            emit_finished(db, job_id, "done")
     except asyncio.CancelledError:
         # Operator stop: the stop operation records the result after this task ends.
         if job_id not in _stop_requested:
@@ -273,5 +294,6 @@ async def run_job(db, job_id: str) -> None:
         await db.jobs.update_one({"id": job_id}, {"$set": {"status": "error", "error": f"Internal error: {exc}",
                                                             "finished_at": ts, "updated_at": ts}})
         await append_log(db, job_id, "error", f"Internal error: {exc}")
+        emit_finished(db, job_id, "error")
     finally:
         await client.close()

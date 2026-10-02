@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getSettings, resetSettings, saveSettings } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import NotificationSettings from './NotificationSettings'
 import { formatDateTime } from './status'
 
 const FIELDS = [
@@ -154,6 +155,7 @@ export default function SettingsTab({ onSaved }) {
           {saved.updated_at && <span className="ml-auto text-xs text-muted-foreground">Last saved {formatDateTime(saved.updated_at)}</span>}
         </div>
       </section>
+      <NotificationSettings />
     </div>
   )
 }
