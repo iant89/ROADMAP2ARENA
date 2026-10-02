@@ -10,20 +10,15 @@
 
 ## Test Request
 
-Agent: backend
-Date: 2026-10-01 20:03 ET
-Built or changed: FastAPI backend for ROADMAP2ARENA (jobs, steps, orchestrator, arena2api client, artifact extractor, ZIP), MongoDB persistence
-Key endpoints or flows: GET /api/config, POST /api/roadmap/parse, POST /api/jobs, GET /api/jobs, GET /api/jobs/{id}, GET /api/jobs/{id}/steps/{index}, GET /api/jobs/{id}/download
+Agent: frontend
+Date: 2026-10-01 20:11 ET
+Built or changed: Inline validation message for empty model (F-001)
+Key endpoints or flows: validation flow (clear the Model field or enter whitespace -> inline "Model is required" under the field and Start job disabled; a non-http(s) arena2api URL such as ftp://... -> inline "Use an http:// or https:// URL"; fixing the values removes the messages and re-enables Start) + quick regression of run_job, artifacts, download_zip, error_job
 Data: real backend
-Features present: sessions no (but each job has its own conversation and artifacts; jobs must never mix), auth no, integrations: arena2api via local stand-in only
-Retest: B-001, B-002
+Features present: sessions no, auth no, integrations: arena2api via local stand-in at http://localhost:9090 only (form default URL)
+Retest: F-001
 Test accounts: none
-Notes:
-- arena2api is replaced by a LOCAL stand-in (backend/tests/arena_stub.py, supervisor program arena-stub) on http://127.0.0.1:9090. Magic models: stub-503 (HTTP 503 on every call), stub-503-at-3 (503 on the 3rd user turn only; any stub-503-at-N works), stub-slow (sleeps 5 s per call, for 409 testing). Any other model gets turn-based canned replies containing a lang:path block, a "# filename:" block, an unnamed block, "../evil.py" and "/abs/x.py".
-- Backend: http://127.0.0.1:8001/api directly, or via Caddy at http://localhost:8080/api (UI at http://localhost:8080). Step delay is 2 s (ARENA_STEP_DELAY_SECONDS).
-- One job at a time: POST /api/jobs returns 409 while any job is running, so tests must poll GET /api/jobs/{id} until status is done or error before starting the next job.
-- Edge cases to cover: 422 for arena_url not http/https, empty model, empty roadmap_md, roadmap with no steps (also POST /api/roadmap/parse); 409 second job; 404 unknown job and unknown step index; 409 download when a job has no artifacts; unnamed blocks never appear in artifact_paths or the ZIP; "../" paths skipped from the ZIP (and logged), absolute "/x" paths stored without the leading slash; later steps replace earlier versions of the same path in the ZIP; no "_id" in any response; ids are UUID4; timestamps are ISO 8601 UTC ending in Z; 503 error message includes the "check that the arena2api Chrome tab is open" hint and later steps stay pending; a backend restart mid-job marks it "interrupted by server restart".
-- Put test scripts in /app/backend/tests/.
+Notes: Same environment as before: UI at http://localhost:8080 (Caddy -> Vite 5173 and /api -> backend 127.0.0.1:8001), local arena2api stand-in on 127.0.0.1:9090 (magic models stub-503, stub-503-at-3, stub-slow). Only one job can run at a time (409 otherwise), so wait for each job to finish. Inline messages appear only after a field has been edited (not on first load). F-002 is intentionally not fixed in this round. Do not edit application code.
 
 ## Issue Tracker
 
@@ -31,6 +26,8 @@ Notes:
 |----|----------|------|---------|--------|
 | B-001 | CRITICAL | GET /api/jobs/{id}/steps/{index} | index > 2^63-1 (e.g. 99999999999999999999999) returns 500; OverflowError from pymongo in server.py get_step | VERIFIED |
 | B-002 | MAJOR | POST /api/jobs | One-job-at-a-time rule is racy: 5 concurrent POSTs all returned 201 and 5 jobs ran at once (expected one 201 + four 409); check-then-insert in server.py create_job | VERIFIED |
+| F-001 | MAJOR | Frontend StartForm validation | Empty/whitespace model only disables Start job silently; no error message explains why (expected a clear error) | FIXED |
+| F-002 | MINOR | Frontend App URL state | Starting/opening a job does not put ?job=<id> in the URL, so a reload drops back to the empty form (job still reachable via Recent jobs) | SKIPPED |
 
 ## Test Log
 
@@ -58,3 +55,30 @@ Retested:
 Not tested: backend restart mid-job ("interrupted by server restart"); 500-entry log cap; real arena2api.
 Note: the backend runs with uvicorn --reload watching /app/backend including tests/, so editing a test file reloaded the backend (StatReload in the log). No job was running at the time, but such a reload would interrupt a running job.
 
+
+### Frontend test run - 2026-10-01 20:10 ET
+Tester: frontend testing agent
+Scope: Dashboard at http://localhost:8080 in headless Chromium (1440x900) against the real backend and the local arena2api stand-in (:9090): initial load/config defaults and empty states, sample roadmap preview, form validation, full job run (gpt-4o and stub-slow) with live checklist/log/progress, Artifacts tab, Transcript tab, Log tab, ZIP download, deep link + reload, Recent jobs sheet, error job (stub-503-at-3), unknown route and bad job ids, reload after starting a job. Script: /app/frontend/tests/run_flows.py (one function per flow). No route interception needed (all /api calls go to localhost:8080/api). Test jobs (5, titled test_ue68d...) were removed from Mongo by id afterwards (no delete API/UI exists).
+Result: FAIL
+Flows:
+load_page - PASS
+sample_preview - PASS
+validation - FAIL
+run_job - PASS
+artifacts - PASS
+transcript - PASS
+log - PASS
+download_zip - PASS
+deep_link_reload - PASS
+recent_jobs - PASS
+error_job - PASS
+url_after_start - PASS
+routes - PASS
+reload_after_start - FAIL
+Failures:
+- [F-001][MAJOR] validation, empty or whitespace-only model - expected a clear error instead of starting vs actual Start job button just turns disabled with no message saying why (bad URL scheme correctly shows a "Could not start job" toast with the 422 detail) - StartForm.jsx startDisabled checks !form.model.trim() but no inline/field error is rendered. Screenshot /tmp/screenshots/validation.png
+- [F-002][MINOR] reload_after_start, reload after starting a job - expected the current job to stay open after reload vs actual page returns to empty "New job" form; URL stays "/" without ?job=<id> (job is still in Recent jobs, no data lost) - App.jsx handleStart/handlePickJob never write ?job=<id> into the URL (history.replaceState). Screenshot /tmp/screenshots/reload_after_start.png
+Console errors: "Failed to load resource: 422" x3 (expected 422s: POST /api/roadmap/parse when the roadmap has no steps, and POST /api/jobs with ftp:// URL); "Failed to load resource: 404" x3 (expected: /?job=not-a-real-id and unknown UUID deep links). No page exceptions, no React warnings.
+Network failures: None (no requestfailed, no CORS errors, no wrong-host /api calls; only external requests are Google Fonts). Only /api >=400 responses were the expected 422/404s above.
+Retested: none (no Retest items, no FIXED issues)
+Not tested: tablet/mobile layout (excluded by the requester for this run); backend restart mid-job; real arena2api. Note: with the instant stub replies (gpt-4o) a step is "running" for under one 1.5 s poll, so the running state was verified with stub-slow.
