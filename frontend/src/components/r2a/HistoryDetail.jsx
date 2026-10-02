@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Copy, Download, FileDown, FolderTree, ListChecks, MessagesSquare, ScrollText, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { GitCommitIcon } from '@primer/octicons-react'
+import { GitCommitIcon, MarkGithubIcon } from '@primer/octicons-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -12,6 +12,7 @@ import ArtifactsPanel from './ArtifactsPanel'
 import ConfirmButton from './ConfirmButton'
 import FullTranscript from './FullTranscript'
 import GitPanel from './GitPanel'
+import PushToGitHubSheet from './PushToGitHubSheet'
 import JobAlerts from './JobAlerts'
 import JobControls from './JobControls'
 import LogPanel from './LogPanel'
@@ -37,6 +38,7 @@ export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueCh
   const [tab, setTab] = useState('transcript')
   const [selectedPath, setSelectedPath] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [pushOpen, setPushOpen] = useState(false)
 
   useEffect(() => { setSelectedPath(null) }, [jobId])
   useEffect(() => {
@@ -107,6 +109,16 @@ export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueCh
                 <Download /> {actions.downloading ? 'Packing...' : 'Download ZIP'}
               </Button>
             )}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setPushOpen(true)}
+              disabled={running || job.steps_done < 1}
+              title={running ? 'Wait until the job finishes' : job.steps_done < 1 ? 'No completed steps yet' : 'Push the git history to GitHub'}
+              data-testid="push-github-button"
+            >
+              <MarkGithubIcon size={16} /> Push to GitHub
+            </Button>
             <ConfirmButton
               onConfirm={remove}
               busy={deleting}
@@ -125,6 +137,7 @@ export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueCh
         {running && <p className="text-[12px] text-muted-foreground" data-testid="delete-running-hint">A running job can't be deleted - stop it first.</p>}
       </div>
 
+      <PushToGitHubSheet job={job} open={pushOpen} onOpenChange={setPushOpen} onPushed={() => refresh?.()} />
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0">
         <div className="min-w-0 overflow-x-auto border-b border-border px-5 py-2.5 lg:px-7">
           <TabsList className="grid h-9 w-full grid-cols-5 bg-secondary sm:inline-flex sm:w-fit">
@@ -145,7 +158,7 @@ export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueCh
           <RoadmapChecklist steps={job.steps} job={job} />
         </TabsContent>
         <TabsContent value="git" className="min-h-[420px] flex-1">
-          <GitPanel key={job.id} job={job} version={`${job.status}:${job.steps.filter((s) => s.commit_sha).length}`} />
+          <GitPanel key={job.id} job={job} version={`${job.status}:${job.steps.filter((s) => s.commit_sha).length}:${job.log.length}`} />
         </TabsContent>
         <TabsContent value="log" className="min-h-[420px] flex-1">
           <LogPanel job={job} />

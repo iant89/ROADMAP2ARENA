@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Archive, FileCode2, RefreshCw } from 'lucide-react'
-import { GitBranchIcon, GitCommitIcon, PackageIcon, RepoIcon } from '@primer/octicons-react'
+import { GitBranchIcon, GitCommitIcon, GitPullRequestIcon, MarkGithubIcon, PackageIcon, RepoIcon } from '@primer/octicons-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -164,6 +164,18 @@ export default function GitPanel({ job, version }) {
           </Button>
         </div>
       </div>
+      {git.remotes?.length > 0 && (
+        <ul className="flex flex-wrap gap-x-4 gap-y-1 border-b border-border px-4 py-1.5 text-[12px]" data-testid="git-remotes">
+          {git.remotes.map((r) => (
+            <li key={`${r.full_name}:${r.branch}`} className="flex items-center gap-1.5">
+              <MarkGithubIcon size={16} />
+              <a href={`${r.html_url}/tree/${r.branch}`} target="_blank" rel="noreferrer" className="font-mono underline underline-offset-2">{r.full_name}:{r.branch}</a>
+              <span className="text-muted-foreground">{r.pushed_head?.slice(0, 7)}{r.pushed_head === git.head ? ' (up to date)' : ' (behind)'}</span>
+              {r.pr_url && <a href={r.pr_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 underline"><GitPullRequestIcon size={16} /> #{r.pr_number}</a>}
+            </li>
+          ))}
+        </ul>
+      )}
       {git.uncommitted_steps > 0 && job.status !== 'running' && (
         <p className="border-b border-border bg-amber-50 px-4 py-1.5 text-[12px] text-amber-800" data-testid="git-uncommitted">
           {git.uncommitted_steps} done step{git.uncommitted_steps === 1 ? ' has' : 's have'} no commit (see the Log).{' '}

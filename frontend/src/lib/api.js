@@ -380,3 +380,60 @@ export async function downloadJobRepo(jobId, format = 'zip') {
   const res = await request(`/jobs/${encodeURIComponent(jobId)}/git/download?format=${format}`, { raw: true })
   return saveResponse(res, `roadmap2arena-${jobId.slice(0, 8)}.${format === 'bundle' ? 'bundle' : 'zip'}`)
 }
+
+// ---------------------------------------------------------------- GitHub
+// { connected, username, name, avatar_url, html_url, scopes, token_type, connected_at, auto_push: { enabled, private } }
+// The token is never returned.
+export async function getGitHub() {
+  return request('/github')
+}
+
+export async function connectGitHub(token) {
+  return request('/github/token', { method: 'PUT', body: { token } })
+}
+
+export async function disconnectGitHub() {
+  return request('/github', { method: 'DELETE' })
+}
+
+export async function saveGitHubSettings(patch) {
+  return request('/github/settings', { method: 'PUT', body: patch })
+}
+
+// { items: [{ full_name, name, owner, private, default_branch, html_url, can_push }], total, truncated }
+export async function listGitHubRepos(q = '') {
+  return request(`/github/repos${q ? `?q=${encodeURIComponent(q)}` : ''}`)
+}
+
+// { connected, username, defaults: { repo_name, branch, pr_title, pr_body }, last_push }
+export async function getJobGitHub(jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/github`)
+}
+
+// body: { mode: 'new'|'existing', repo_name, private, repo_full_name, branch, open_pr, pr_base, pr_title, pr_body }
+export async function pushJobToGitHub(jobId, body) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/github/push`, { method: 'POST', body })
+}
+
+// OAuth device flow: start -> { user_code, verification_uri, expires_at, interval };
+// poll every `interval` s -> { status: pending|slow_down|connected|expired|denied, interval, github }
+export async function startGitHubOAuth() {
+  return request('/github/oauth/start', { method: 'POST' })
+}
+
+export async function pollGitHubOAuth() {
+  return request('/github/oauth/poll', { method: 'POST' })
+}
+
+export async function cancelGitHubOAuth() {
+  return request('/github/oauth/cancel', { method: 'POST' })
+}
+
+// Watches created by pushes; the backend polls them every poll_seconds and emits github_* notifications.
+export async function getGitHubWatches() {
+  return request('/github/watches')
+}
+
+export async function pollGitHubNow() {
+  return request('/github/poll', { method: 'POST' })
+}

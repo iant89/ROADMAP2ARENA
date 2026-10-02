@@ -9,6 +9,22 @@ const TOAST = {
   job_failed: (n, o) => toast.error(n.message, o),
   job_stopped: (n, o) => toast.warning(n.message, o),
   queue_empty: (n, o) => toast.info(n.message, o),
+  github_pushed: (n, o) => toast.info(n.message, o),
+  github_pr_opened: (n, o) => toast.info(n.message, o),
+  github_pr_merged: (n, o) => toast.success(n.message, o),
+  github_pr_closed: (n, o) => toast.warning(n.message, o),
+  github_checks_passed: (n, o) => toast.success(n.message, o),
+  github_checks_failed: (n, o) => toast.error(n.message, o),
+}
+
+// GitHub events carry `link` (the branch / PR / commit on GitHub); open it in a new tab.
+export function openExternal(url) {
+  if (/^https?:\/\//.test(url || '')) window.open(url, '_blank', 'noopener,noreferrer')
+}
+
+function toastAction(n, open) {
+  if (n.link) return { label: 'View on GitHub', onClick: () => openExternal(n.link) }
+  return { label: n.job_id ? 'Open' : 'View queue', onClick: () => open(n) }
 }
 
 // Polls GET /api/notifications. Notifications that appear after the first load are shown as
@@ -36,7 +52,7 @@ export function useNotifications({ onOpenJob, onOpenQueue }) {
       fresh.forEach((n) => seen.current.add(n.id))
       for (const n of fresh.filter((x) => !x.read)) {
         const show = TOAST[n.event] ?? ((x, o) => toast(x.message, o))
-        show(n, { id: `notif-${n.id}`, action: { label: n.job_id ? 'Open' : 'View queue', onClick: () => open(n) } })
+        show(n, { id: `notif-${n.id}`, action: toastAction(n, open) })
         showBrowser(n, () => open(n))
       }
     } catch {

@@ -31,6 +31,8 @@ import deletion_routes
 import git_integration
 import repos
 from git_integration import router as git_router
+import github_integration
+from github_integration import router as github_router
 from queue_routes import queue_state, router as queue_router
 from roadmap_parser import parse_roadmap, roadmap_title
 
@@ -56,11 +58,15 @@ async def lifespan(_: FastAPI):
     await db.notifications.create_index([("created_at", DESCENDING)])
     await app_settings.seed(db, now_iso())
     await repos.ensure_indexes(db)
+    await github_integration.ensure_indexes(db)
     if notifier.on_job_finished not in orchestrator.on_job_finished:
         orchestrator.on_job_finished.append(notifier.on_job_finished)
+    if github_integration.on_job_finished not in orchestrator.on_job_finished:
+        orchestrator.on_job_finished.append(github_integration.on_job_finished)  # auto-push (if enabled)
     for hooks, cb in ((orchestrator.on_run_start, git_integration.on_run_start),
                       (orchestrator.on_step_done, git_integration.on_step_done),
-                      (deletion_routes.on_delete, git_integration.on_delete)):
+                      (deletion_routes.on_delete, git_integration.on_delete),
+                      (deletion_routes.on_delete, github_integration.on_delete)):
         if cb not in hooks:
             hooks.append(cb)
     stale = await db.jobs.find({"status": "running"}, {"_id": 0, "id": 1}).to_list(None)
@@ -79,7 +85,9 @@ async def lifespan(_: FastAPI):
     async with scheduler.lock:
         await scheduler.renumber(db)
     scheduler.start_worker(db)
+    github_integration.start_poller()  # in-process: keep uvicorn at --workers 1
     yield
+    await github_integration.stop_poller()
     await scheduler.stop_worker()
     mongo.close()
 
@@ -418,3 +426,4 @@ app.include_router(history_router)
 app.include_router(deletion_router)
 app.include_router(notification_router)
 app.include_router(git_router)
+app.include_router(github_router)

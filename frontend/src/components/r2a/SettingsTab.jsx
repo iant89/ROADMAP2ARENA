@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { getSettings, resetSettings, saveSettings } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import NotificationSettings from './NotificationSettings'
+import GitHubSettings from './GitHubSettings'
 import { formatDateTime } from './status'
 
 const FIELDS = [
@@ -156,6 +157,7 @@ export default function SettingsTab({ onSaved }) {
         </div>
       </section>
       <NotificationSettings />
+      <GitHubSettings />
     </div>
   )
 }

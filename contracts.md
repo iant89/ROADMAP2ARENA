@@ -40,6 +40,18 @@ FastAPI's `{"detail": "..."}` shape.
 | POST | `/api/jobs/{id}/git/init` | create the repo now and commit every done step without a commit (older jobs); same shape + `committed_steps:[N]`; idempotent | 404, 500 git error |
 | GET | `/api/jobs/{id}/git/commits/{sha}` (4-40 hex) | `{sha, short_sha, subject, message, parents, step_index, author_name, author_email, date, files:[{path, status added/modified/deleted/renamed, old_path, additions, deletions}], patch (max 400k chars), patch_truncated}` | 422 bad sha, 404 job/repo/commit |
 | GET | `/api/jobs/{id}/git/download?format=zip\|bundle` | zip = working tree + `.git` in `roadmap2arena-<id8>/` (`roadmap2arena-<id8>-repo.zip`); bundle = `git bundle --all` (`roadmap2arena-<id8>.bundle`, `git clone file.bundle`) | 404 job/no repo, 409 no commits, 422 format |
+| GET | `/api/github` | `{connected, auth_method: pat\|oauth\|env\|null, source: settings\|env\|null, encryption: ok\|missing\|invalid, env_token, token_error, username, name, avatar_url, html_url, scopes, token_type, connected_at, auto_push:{enabled, private}, oauth:{available, client_id, client_id_source: env\|settings\|null, pending:{user_code, verification_uri, expires_at, interval}\|null}}` - never the token | - |
+| PUT | `/api/github/token` `{token}` | validates with GitHub `GET /user` (scopes from X-OAuth-Scopes), stores it Fernet-encrypted; same shape as GET | 422 malformed, 401 rejected by GitHub, 409 no/invalid `R2A_SECRET_KEY` / OAuth connected / device flow pending / `R2A_GITHUB_TOKEN` set, 502 unreachable, 504 timeout |
+| DELETE | `/api/github` | disconnect (token removed; auto_push and client id kept) | 409 when `R2A_GITHUB_TOKEN` is set |
+| PUT | `/api/github/settings` `{auto_push?:{enabled?, private?}, oauth_client_id?}` | same shape as GET; `oauth_client_id:""` clears (falls back to `GITHUB_OAUTH_CLIENT_ID`) | 422 |
+| POST | `/api/github/oauth/start` | device flow (scope `repo`): `{user_code, verification_uri, expires_at, interval}` (device_code stays server-side) | 409 connected / not configured / no `R2A_SECRET_KEY` / `R2A_GITHUB_TOKEN` set, 422 GitHub refused (unknown client id, device flow disabled), 502 |
+| POST | `/api/github/oauth/poll` | `{status: pending\|slow_down\|connected\|expired\|denied, interval, github}`; calls GitHub at most once per interval | 409 nothing pending, 422 other OAuth error |
+| POST | `/api/github/oauth/cancel` | clears the pending flow; GET shape | - |
+| GET | `/api/github/repos?q=` | `{items:[{full_name, name, owner, private, default_branch, html_url, description, can_push, updated_at}], total, truncated}` (up to 300, most recently updated) | 409 not connected (or stored token undecryptable), GitHub errors per the mapping below |
+| GET | `/api/jobs/{id}/github` | `{job_id, connected, username, defaults:{repo_name, branch: r2a/<slug>, pr_title, pr_body}, last_push, watches}` | 404 |
+| POST | `/api/jobs/{id}/github/push` | body `{mode: new\|existing, repo_name, private (default true), description, repo_full_name, branch, open_pr, pr_base, pr_title, pr_body}` -> `{pushed, source, pushed_at, branch, head, commit_count, repo:{full_name, html_url, private, created}, branch_url, commit_url, pr:{number, html_url, existing, base, state}\|null, pr_error}`; emits `github_pushed` (+ `github_pr_opened` for a new PR) and upserts a watch | 404, 409 not connected / running / no commits / repo name exists / non-fast-forward branch / protected or rules, 422 validation (incl. open_pr with mode new), 401 bad token, 403 no permission / workflow scope, 404 repo, 429 rate limit (Retry-After), 502, 504 push timeout |
+| GET | `/api/github/watches` | `{items:[{job_id, full_name, branch, html_url, head_sha, pr_number, state:{pr_state, ci: none\|pending\|success\|failure, ...}, active, pushed_at, expires_at, last_error, last_polled_at}], poll_seconds, paused_for, pause_reason}` (no etags) | - |
+| POST | `/api/github/poll` | poll the active watches now: `{watches, notifications}` or `{skipped: not_connected\|rate_limited\|rate_low\|auth, resume_in?}` | - |
 | GET | `/api/notifications?limit=1..200&unread=bool` | `{items:[{id,event,job_id,title,status,step,message,url,created_at,read,deliveries}], unread_count, total}` newest first (default limit 50) | 422 bad limit/unread |
 | POST | `/api/notifications/{id}/read` | `{id, read:true, unread_count}` | 404 |
 | POST | `/api/notifications/read-all` | `{updated, unread_count:0}` | - |
@@ -129,16 +141,71 @@ Log levels: `info|ok|warn|error`; the job keeps the last 500 entries.
 - UI: History detail > Git tab: commit list, commit detail (files, colored diff),
   Download repo (zip incl. .git) and Bundle; "Create repository" for jobs without a repo.
 
+### GitHub (backend/github_client.py, github_integration.py)
+
+- Connect with a personal access token OR OAuth (device flow; `GITHUB_OAUTH_CLIENT_ID` in .env or a
+  client ID saved in Settings). Mutually exclusive: connecting one while the other is active is 409
+  (replacing a PAT with another PAT is allowed); a PAT is also refused while a device code is pending.
+- The token (PAT or OAuth alike) is stored Fernet-encrypted (`token_enc`) in Mongo (`integrations`,
+  `_id: "github"`) with `R2A_SECRET_KEY` from backend/.env; saving without a valid key is a 409 with
+  the key-generation hint. A changed key makes the stored token unreadable (`token_error`, reconnect).
+  A plaintext token from a pre-release build is encrypted on first read. `R2A_GITHUB_TOKEN` in
+  .env overrides everything (`auth_method: env`; connect/disconnect from the UI are 409).
+- The token is never returned, logged, put in argv, the remote URL or .git/config: `git push` gets it
+  as `http.<https://host/>.extraHeader` (`Authorization: Basic base64(login:token)`, an empty value
+  first resets inherited headers, `credential.helper` cleared) through `GIT_CONFIG_COUNT/KEY_n/VALUE_n`
+  env vars of that one process. All git output is passed through `redact()` (the token and its
+  base64 form, `github_pat_*`, `gh[pousr]_*`, Authorization values, URL credentials). Push timeout
+  300 s. Only https clone URLs on github.com (or the configured API host) are pushed to
+  (`R2A_GITHUB_ALLOW_FILE_REMOTES=1` allows local paths, for tests only).
+- REST: raw httpx, `X-GitHub-Api-Version: 2026-03-10`, timeouts 20 s read / 10 s connect, serial
+  requests. GETs retry once on 5xx/network errors; POSTs never retry. Mapping: 401 -> 401; 403 ->
+  403 with `X-Accepted-GitHub-Permissions` or accepted/actual OAuth scopes; 403/429 rate limit ->
+  429 + `Retry-After`; 404 -> 404 "not found or no access"; 409/422/451 pass through; timeout -> 504;
+  network/5xx/other -> 502. git push failures: non-fast-forward 409, workflow permission 403, auth
+  401, repository not found 404, permission denied 403, GH013/protected/rules 409, timeout 504.
+- Watcher (polling, no public URL/webhook): each push upserts `github_watches` `{job_id, full_name,
+  branch, head_sha, pr_number, etags, state, active, pushed_at, expires_at (+7 days), last_error}`.
+  An in-process loop (started in lifespan; keep uvicorn `--workers 1`) runs every
+  `R2A_GITHUB_POLL_SECONDS` (default 60, min 30), right after a push and on `POST /api/github/poll`.
+  ETag conditional GETs on the branch, the PR (`merged`, never `merge_commit_sha`), the combined status
+  and check-runs (on 403/404 falls back to `actions/runs?head_sha=`). Emits `github_pushed` (new
+  commits from outside), `github_pr_merged`, `github_pr_closed`, `github_checks_passed`,
+  `github_checks_failed`. A watch ends after 7 days or once the PR is closed/merged and CI is final
+  ("no CI" counts as final 15 min after the push). Rate limit/auth errors pause polling
+  (Retry-After / reset / 60 s; 10 min for auth; also when fewer than 50 calls remain); reconnecting
+  lifts the pause. Deleting a job deletes its watches (never anything on GitHub).
+- Push: syncs the job repo first, then `git push HEAD:refs/heads/<branch>` - never `--force`; a
+  diverged branch is a 409 asking for another branch name. New repos are created with
+  `auto_init:false`; a PR needs an existing repo (base = `pr_base` or the repo's default branch).
+  PR problems after a successful push come back as `pr_error` (unrelated history, missing base,
+  nothing to compare); an already-open PR for the branch is returned with `existing: true`.
+- Each push is stored on the job (`github`, = last_push) and in the repo document's `remotes`
+  (one entry per repo+branch, with `pushed_head`), and logged (`GitHub: pushed N commits to ...`).
+- Auto-push (Settings): when a job finishes as done, push to its last pushed repo/branch, else a new
+  repo `<slug>-<id6>` (private per setting). Failures are logged (`GitHub: auto-push failed - ...`).
+- Tests use `GITHUB_API_URL` / `GITHUB_OAUTH_URL` pointing at backend/tests/github_stub.py.
+- UI: Settings > GitHub (OAuth card with code + verification link, PAT card, each disabled with a
+  note while the other is connected; missing-key banner with the generate command; .env-token note;
+  "encrypted at rest"; Disconnect; auto-push; watched branches with CI/PR state and "Check now"). History detail: "Push to GitHub" sheet
+  (new/existing repo with search, branch, optional PR with prefilled title/body, result links);
+  the Git tab lists pushed remotes. Octicons for GitHub/git actions; the GitHub mark
+  (`MarkGithubIcon`) is used unaltered in `currentColor`, always next to the word "GitHub", only on
+  GitHub controls (GitHub logo guidelines) - never as the app logo.
+
 ### Notifications (backend/notifier.py, notify_settings.py, notification_routes.py)
 
 - Events: `job_done`, `job_failed`, `job_stopped` (orchestrator `on_job_finished` hook, fired once
   when a run ends done/error/stopped) and `queue_empty` (right after a job ends, when no job is
   queued or running; paused jobs don't count and are mentioned: "(1 paused job left)").
-  Server-restart interruptions and cancels do not notify.
+  Server-restart interruptions and cancels do not notify. GitHub events (`github_pushed`,
+  `github_pr_opened`, `github_pr_merged`, `github_pr_closed`, `github_checks_passed`,
+  `github_checks_failed`) come from pushes and the watcher, with a prebuilt message and `link`
+  (the GitHub branch/PR/commit URL; `url` stays the in-app job link).
 - Channels with per-event toggles: `in_app` (stored in Mongo `notifications`, last 500 kept ->
   bell, toasts and browser notifications), `webhook`, `email`. Defaults: in-app all on; webhook
-  off (all events on); email off (done + failed on).
-- Webhook: `POST <url>` JSON `{event, job_id, title, status, step, message, url, timestamp, app,
+  off (all events on); email off (done + failed on; GitHub events off).
+- Webhook: `POST <url>` JSON `{event, job_id, title, status, step, message, url, link, timestamp, app,
   text, content}`; `text` (Slack) = `content` (Discord, max 1900 chars) = emoji + message + link.
   `step` = step_total (done), failed_step (failed), stopped_step (stopped), null (queue empty).
   `url` = `<app_url>/?tab=history&job=<id>` (queue empty: `?tab=queue`). 10 s timeout, 2xx = ok.

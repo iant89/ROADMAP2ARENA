@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Bell, BellOff, CheckCheck, CircleCheckBig, CircleX, Inbox, Square, Trash2, X } from 'lucide-react'
+import { CheckCircleIcon, GitMergeIcon, GitPullRequestClosedIcon, GitPullRequestIcon, LinkExternalIcon, RepoPushIcon, XCircleIcon } from '@primer/octicons-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -12,6 +13,12 @@ const EVENT = {
   job_failed: { icon: CircleX, cls: 'text-coral', label: 'Failed' },
   job_stopped: { icon: Square, cls: 'text-pause', label: 'Stopped' },
   queue_empty: { icon: Inbox, cls: 'text-queue', label: 'Queue empty' },
+  github_pushed: { icon: RepoPushIcon, cls: 'text-foreground', label: 'GitHub push' },
+  github_pr_opened: { icon: GitPullRequestIcon, cls: 'text-teal', label: 'PR opened' },
+  github_pr_merged: { icon: GitMergeIcon, cls: 'text-violet-600 dark:text-violet-400', label: 'PR merged' },
+  github_pr_closed: { icon: GitPullRequestClosedIcon, cls: 'text-coral', label: 'PR closed' },
+  github_checks_passed: { icon: CheckCircleIcon, cls: 'text-teal', label: 'Checks passed' },
+  github_checks_failed: { icon: XCircleIcon, cls: 'text-coral', label: 'Checks failed' },
 }
 
 function deliveryNote(d) {
@@ -45,7 +52,7 @@ export default function NotificationBell({ notifications }) {
         <SheetContent className="w-full gap-0 bg-background sm:max-w-md" data-testid="notif-panel">
           <SheetHeader className="border-b border-border bg-card px-5 py-4">
             <SheetTitle className="flex items-center gap-2"><Bell className="size-4" /> Notifications</SheetTitle>
-            <SheetDescription>{unreadCount} unread of {total}. Job finished, failed and stopped, and queue empty.</SheetDescription>
+            <SheetDescription>{unreadCount} unread of {total}. Jobs, the queue and GitHub (pushes, pull requests, checks).</SheetDescription>
             <div className="flex flex-wrap gap-2 pt-2">
               <Button size="xs" variant="outline" onClick={markAll} disabled={!unreadCount} data-testid="notif-mark-all"><CheckCheck /> Mark all read</Button>
               <ConfirmButton size="xs" onConfirm={clear} disabled={!total} testId="notif-clear" confirmLabel="Clear all?"><Trash2 /> Clear</ConfirmButton>
@@ -79,6 +86,14 @@ export default function NotificationBell({ notifications }) {
                         </p>
                       </button>
                       <div className="flex shrink-0 items-start gap-0.5">
+                        {/^https?:\/\//.test(n.link || '') && (
+                          <Button asChild size="icon-xs" variant="ghost">
+                            <a href={n.link} target="_blank" rel="noopener noreferrer" aria-label="Open on GitHub" title="Open on GitHub"
+                              onClick={() => { if (!n.read) markRead(n.id) }} data-testid="notif-link">
+                              <LinkExternalIcon size={16} />
+                            </a>
+                          </Button>
+                        )}
                         {!n.read && (
                           <Button size="icon-xs" variant="ghost" onClick={() => markRead(n.id)} aria-label="Mark as read" title="Mark as read" data-testid="notif-mark-read">
                             <span className="size-2 rounded-full bg-coral" />
