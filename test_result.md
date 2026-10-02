@@ -140,3 +140,21 @@ Retested: none (no Retest items or FIXED issues)
 Settings: original values matched the .env defaults (http://localhost:9090, gpt-4o, 2 s, 300 s); restored with POST /api/settings/reset and checked with GET.
 Not tested: backend restart with queued/paused jobs and with a running job ("interrupted by server restart") - the tester may not restart a running backend; request-timeout expiry itself (the stub cannot be slower than 5 s, so I only checked the timeout value in the job log); 500-entry log cap; real arena2api.
 
+### Backend test run - 2026-10-01 21:45 ET
+Tester: backend testing agent
+Scope: feat/history-panel (PR #4), run through Caddy (TEST_BASE_URL=http://localhost:8080) with direct 127.0.0.1:8001 checks. New suite /app/backend/tests/test_history_extra.py:
+- transcript JSON: shape, turns in step order matching the stored prompt/response/artifacts; pending steps omitted; queued/cancelled jobs have no turns; running and error turns are included.
+- transcript.html: text/html; charset=utf-8, attachment roadmap2arena-<id8>-transcript.html, DOCTYPE through </html>, tags balanced (parsed), only safe tags/attributes, no script/iframe/img/link/a. Escaping checked with <script>, &, quotes, </style>, <img onerror>, <iframe> and javascript: in the title, step titles, project context and description; emoji kept.
+- files: list shape, sorting, versions [1,3], zip_path/zip_skip_reason for ../evil.py and /abs/x.py, size equals the downloaded bytes; empty list for queued/running/error jobs.
+- files/download: bytes and text/plain; latest vs ?step=N; Content-Disposition basename. 23 traversal or unknown paths (../, %2e%2e, double-encoded, absolute, backslashes, NUL, file://, .env paths, 5000-char path) and raw encoded query strings -> 404 JSON, never file-system content. Missing/empty path and step 0/100001/-1/abc/1.5/2^70 -> 422.
+- clone-source: shape and values equal the source; cloned_from persists in detail, list and GET /api/queue; "Clone of job X" log line; clone of a clone works. Unknown/empty/long/non-string cloned_from -> 422 with nothing created; null -> no clone.
+- unknown/malformed ids -> 404 on all new endpoints; POST/PUT/DELETE/PATCH -> 405; no _id anywhere.
+Also ran Axiom's test_history.py 7/7 plus a regression of test_queue_settings.py 10/10, run_tests.py 21/21, test_job_controls.py 18/18 (ONCE_N=8; I did not restart arena-stub because restarting services is not allowed for the tester) and a direct-port sanity subset 6/6.
+Result: PASS
+Passed: 73   Failed: 0
+Failures: none
+Retested: none (no Retest items or FIXED issues)
+Settings: original values equal the .env defaults; reset with POST /api/settings/reset at the end and checked with GET.
+Notes: a %2F in the URL path (/files%2Fdownload) is decoded by the server and served by the normal route (only the job's own file), so this is not a bug. One test-file edit between runs triggered a uvicorn reload while no job was running.
+Not tested: backend restart with queued/running jobs; request-timeout expiry; real arena2api.
+
