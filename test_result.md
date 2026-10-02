@@ -35,7 +35,7 @@ Notes:
 | B-002 | MAJOR | POST /api/jobs | One-job-at-a-time rule is racy: 5 concurrent POSTs all returned 201 and 5 jobs ran at once (expected one 201 + four 409); check-then-insert in server.py create_job | VERIFIED |
 | F-001 | MAJOR | Frontend StartForm validation | Empty/whitespace model only disables Start job silently; no error message explains why (expected a clear error) | VERIFIED |
 | F-002 | MINOR | Frontend App URL state | Starting/opening a job does not put ?job=<id> in the URL, so a reload drops back to the empty form (job still reachable via Recent jobs) | SKIPPED |
-| B-003 | CRITICAL | POST /api/jobs/{id}/stop | Concurrent stop calls on a running job (4 parallel) all return 200 with status "running"; job and step stay "running" with no task (no stop log line), blocking every new job until stop is called again. Repeat cancel() in orchestrator.stop interrupts the CancelledError handler/mark_stopped in run_job | FIXED |
+| B-003 | CRITICAL | POST /api/jobs/{id}/stop | Concurrent stop calls on a running job (4 parallel) all return 200 with status "running"; job and step stay "running" with no task (no stop log line), blocking every new job until stop is called again. Repeat cancel() in orchestrator.stop interrupts the CancelledError handler/mark_stopped in run_job | VERIFIED |
 
 ## Test Log
 
@@ -119,4 +119,15 @@ Failures:
 - [B-003][CRITICAL] POST /api/jobs/{id}/stop x4 in parallel on a job mid-step (stub-slow-at-2) - expected job "stopped", stopped_step 2, one 200 (others 200/409) vs actual four 200s with body status "running", stopped_step null; job and step 2 still "running" after 6 s with no stop log line, so any_job_running() returns 409 for all new jobs until another stop - orchestrator.stop calls task.cancel() on every call; the 2nd cancel lands while run_job's CancelledError handler awaits mark_stopped, aborting it (reproduced twice)
 Retested: none (no Retest items or FIXED issues)
 Not tested: backend restart mid-job / resuming an "interrupted by server restart" job (restarting a running backend is not allowed for the tester); 500-entry log cap; real arena2api.
+
+### Backend test run - 2026-10-01 20:56 ET
+Tester: backend testing agent
+Scope: Retest of B-003 (concurrent stop) on feat/job-controls, the new stop-after-finish 409 behaviour, then regression of both suites (test_job_controls.py 18 tests incl. cleanup, test_backend_api.py 21 tests). Test files were updated before any job started (concurrent-stop test now loops 3x with 4-6 parallel stops and starts a new job after each; new stop-vs-natural-finish race test; stub-503-once-at-N uses N from env ONCE_N, default 4). Backend confirmed healthy before running. All test jobs deleted.
+Result: PASS
+Passed: 39   Failed: 0
+Failures: none
+Retested:
+- B-003 VERIFIED: 9 iterations over 3 runs (4, 5 and 6 parallel stops on a stub-slow-at-2 job mid-step 2). Each time the job ended "stopped" with stopped_step 2 and steps done/stopped/pending, with exactly one "Job stopped" log line. Every 200 body said status "stopped", and a new job started (201) right afterwards. Step 2 never flipped to done 5.5 s later.
+- Stop vs natural finish (1-step stub-slow-at-1 job, 3 parallel stops at about 4.85-5.15 s): either 200 and the job ends "stopped" with one stop log line, or 409 for every call and the job ends "done" with no stop log line. Never a 500 and no job left running. A caller arriving just after a successful stop gets 409 "Job is stopped", which matches the contract.
+Not tested: backend restart mid-job / resuming an "interrupted by server restart" job; 500-entry log cap; real arena2api.
 

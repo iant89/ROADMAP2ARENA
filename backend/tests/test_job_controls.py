@@ -281,33 +281,76 @@ def test_error_job_concurrent_resume_with_override():
 
 
 def test_resume_with_503_once_model():
-    jid = create("stub-503-once-at-2", 3, "once")
+    n = int(os.environ.get("ONCE_N", "4"))  # fresh N per stand-in process (2 and 3 already used)
+    model = f"stub-503-once-at-{n}"
+    jid = create(model, n + 1, "once")
     j = wait(jid)
     if j["status"] == "done":
-        raise AssertionError("stub-503-once-at-2 did not fire (already used in this stub process)")
-    assert j["status"] == "error" and j["failed_step"] == 2
-    assert c.post(f"{BASE}/jobs/{jid}/resume").json()["resumed_from_step"] == 2
+        raise AssertionError(f"{model} did not fire (already used in this stub process)")
+    assert j["status"] == "error" and j["failed_step"] == n
+    assert c.post(f"{BASE}/jobs/{jid}/resume").json()["resumed_from_step"] == n
     j = wait(jid)
-    assert j["status"] == "done" and j["model"] == "stub-503-once-at-2"
-    assert [turn_of(step(jid, i)["response"]) for i in (1, 2, 3)] == [1, 2, 3]
+    assert j["status"] == "done" and j["model"] == model
+    assert [turn_of(step(jid, i)["response"]) for i in range(1, n + 2)] == list(range(1, n + 2))
 
 
 # ------------------------------------------------------------------ concurrent stops, stop between steps
-def test_concurrent_stops_mid_step():
-    jid = create("stub-slow-at-2", 3, "cstop")
-    S["cstop"] = jid
+def _concurrent_stops_once(tag, n_calls=5):
+    jid = create("stub-slow-at-2", 3, tag)
     wait_step_running(jid, 2)
-    res = parallel(4, lambda cl, i: cl.post(f"{BASE}/jobs/{jid}/stop"))
+    res = parallel(n_calls, lambda cl, i: cl.post(f"{BASE}/jobs/{jid}/stop"))
     codes = sorted(r.status_code for r in res)
     assert all(code in (200, 409) for code in codes) and 200 in codes, codes
     for r in res:
         if r.status_code == 200:
-            assert r.json()["status"] == "stopped"
+            assert r.json() == {"job_id": jid, "status": "stopped", "stopped_step": 2, "steps_done": 1}, r.json()
     j = job(jid)
-    assert j["status"] == "stopped", j["status"]
+    assert j["status"] == "stopped", (j["status"], codes)
     assert j["stopped_step"] == 2, f"stopped_step={j['stopped_step']} codes={codes}"
+    assert [s["status"] for s in j["steps"]] == ["done", "stopped", "pending"]
     stops = [e for e in j["log"] if e["msg"].startswith("Job stopped")]
     assert len(stops) == 1, [e["msg"] for e in stops]
+    assert no_job_running()
+    return jid
+
+
+def test_concurrent_stops_mid_step():
+    for i in range(3):
+        jid = _concurrent_stops_once(f"cstop{i}", n_calls=4 + i)
+        # a new job can start right afterwards
+        nid = create("gpt-4o", 1, f"after{i}")
+        wait(nid)
+    S["cstop"] = jid
+    time.sleep(5.5)  # abandoned slow request must not flip step 2
+    j = job(jid)
+    assert j["status"] == "stopped" and [s["status"] for s in j["steps"]] == ["done", "stopped", "pending"]
+
+
+def test_stop_racing_natural_finish():
+    """Stop sent around the moment a 1-step stub-slow-at-1 job finishes: 200+stopped or 409+done, never 500."""
+    seen = []
+    for offset in (4.85, 4.95, 5.0, 5.05, 5.15):
+        jid = create("stub-slow-at-1", 1, f"race{int(offset * 100)}")
+        wait_step_running(jid, 1)
+        time.sleep(offset - 0.1)
+        res = parallel(3, lambda cl, i: cl.post(f"{BASE}/jobs/{jid}/stop"))
+        codes = sorted(r.status_code for r in res)
+        j = wait(jid)
+        seen.append((offset, codes, j["status"], j["stopped_step"]))
+        assert all(code in (200, 409) for code in codes), seen
+        if 200 in codes:
+            assert j["status"] == "stopped", seen
+        else:
+            assert j["status"] == "done", seen
+            assert all("finished as done" in r.json()["detail"] or "is done" in r.json()["detail"] for r in res), \
+                [r.json() for r in res]
+        stops = [e for e in j["log"] if e["msg"].startswith("Job stopped")]
+        assert len(stops) == (1 if j["status"] == "stopped" else 0), (seen, [e["msg"] for e in stops])
+        assert no_job_running()
+    print("    race outcomes:", seen)
+    # stop on a done job is a plain 409
+    r = c.post(f"{BASE}/jobs/{CREATED[-1]}/stop")
+    assert r.status_code == 409
 
 
 def test_restart_from_stopped_job():
