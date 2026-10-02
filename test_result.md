@@ -26,7 +26,7 @@ Notes: Same environment as before: UI at http://localhost:8080 (Caddy -> Vite 51
 |----|----------|------|---------|--------|
 | B-001 | CRITICAL | GET /api/jobs/{id}/steps/{index} | index > 2^63-1 (e.g. 99999999999999999999999) returns 500; OverflowError from pymongo in server.py get_step | VERIFIED |
 | B-002 | MAJOR | POST /api/jobs | One-job-at-a-time rule is racy: 5 concurrent POSTs all returned 201 and 5 jobs ran at once (expected one 201 + four 409); check-then-insert in server.py create_job | VERIFIED |
-| F-001 | MAJOR | Frontend StartForm validation | Empty/whitespace model only disables Start job silently; no error message explains why (expected a clear error) | FIXED |
+| F-001 | MAJOR | Frontend StartForm validation | Empty/whitespace model only disables Start job silently; no error message explains why (expected a clear error) | VERIFIED |
 | F-002 | MINOR | Frontend App URL state | Starting/opening a job does not put ?job=<id> in the URL, so a reload drops back to the empty form (job still reachable via Recent jobs) | SKIPPED |
 
 ## Test Log
@@ -82,3 +82,22 @@ Console errors: "Failed to load resource: 422" x3 (expected 422s: POST /api/road
 Network failures: None (no requestfailed, no CORS errors, no wrong-host /api calls; only external requests are Google Fonts). Only /api >=400 responses were the expected 422/404s above.
 Retested: none (no Retest items, no FIXED issues)
 Not tested: tablet/mobile layout (excluded by the requester for this run); backend restart mid-job; real arena2api. Note: with the instant stub replies (gpt-4o) a step is "running" for under one 1.5 s poll, so the running state was verified with stub-slow.
+
+### Frontend test run - 2026-10-01 20:23 ET
+Tester: frontend testing agent
+Scope: Retest of F-001 (inline validation for model and arena2api URL) plus a quick regression of run_job (sample roadmap, stub-slow so the running state is visible), artifacts, download_zip and error_job (stub-503-at-3) on http://localhost:8080 in headless Chromium (1440x900) with the real backend and the :9090 stand-in. Script: /app/frontend/tests/run_flows.py (new flow validation_inline). No route interception needed. F-002 not retested (SKIPPED). Test jobs (10, titled test_1duks...) were removed from Mongo by id afterwards (no delete API/UI exists).
+Result: PASS
+Flows:
+validation_inline - PASS
+load_page - PASS
+run_job - PASS
+artifacts - PASS
+download_zip - PASS
+error_job - PASS
+Failures: none
+Console errors: None (only Vite connecting/connected debug messages).
+Network failures: None (no requestfailed, no CORS errors, no /api responses >=400 in the final runs, no wrong-host /api calls; only external requests are Google Fonts).
+Retested:
+- F-001 VERIFIED: no messages on first load; empty and whitespace-only model show "Model is required" under the field (aria-invalid=true) and disable Start job; ftp://localhost:9090 and localhost:9090 show "Use an http:// or https:// URL"; empty URL shows "arena2api base URL is required"; both messages can show at once; valid values clear both and re-enable Start; no POST /api/jobs was sent and status stayed Idle.
+Not tested: F-002 (SKIPPED by request); transcript, log, deep link, recent jobs, routes (not in this regression scope); tablet/mobile; backend restart mid-job; real arena2api.
+Note: early run_job attempts failed because the Vite dev server sent {"type":"full-reload"} over its websocket when files under /app/frontend changed during a run (the tester's own state file and script edits in /app/frontend/tests). This came from the test harness, not the app. The state file was moved to /tmp, and run_job then passed with no reloads. Tester jobs left orphaned by those reloads were included in the cleanup.

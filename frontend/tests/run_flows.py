@@ -5,9 +5,9 @@ from playwright.sync_api import sync_playwright, expect
 
 BASE = "http://localhost:8080"
 HERE = os.path.dirname(os.path.abspath(__file__))
-STATE = os.path.join(HERE, "state.json")
+STATE = "/tmp/r2a_test_state.json"  # outside the Vite root: writes under /app/frontend trigger Vite full-reload
 SHOTS = "/tmp/screenshots"
-IGNORE = re.compile(r"\[vite\]|React DevTools|favicon\.ico", re.I)
+IGNORE = re.compile(r"React DevTools|favicon\.ico", re.I)
 
 def load_state():
     return json.load(open(STATE)) if os.path.exists(STATE) else {"jobs": [], "suffix": "".join(random.choices(string.ascii_lowercase + string.digits, k=5))}
@@ -20,7 +20,7 @@ console, netfail, api_bad, wrong_host = Counter(), Counter(), Counter(), Counter
 
 def instrument(page):
     page.set_default_timeout(10_000)
-    page.on("console", lambda m: m.type in ("error", "warning") and not IGNORE.search(m.text) and console.update([f"{m.type}: {m.text[:200]}"]))
+    page.on("console", lambda m: (m.type in ("error", "warning") or "vite" in m.text) and not IGNORE.search(m.text) and console.update([f"{m.type}: {m.text[:200]}"]))
     page.on("pageerror", lambda e: console.update([f"pageerror: {str(e)[:200]}"]))
     def onfail(r):
         if not IGNORE.search(r.url): netfail.update([f"{r.method} {r.url} {r.failure}"])
@@ -34,6 +34,11 @@ def instrument(page):
         if u.startswith("data:") or u.startswith("blob:"): return
         if not u.startswith(BASE): wrong_host.update([u[:120]])
     page.on("request", onreq)
+    if os.environ.get("DBG"):
+        page.on("console", lambda m: print("   con", time.strftime('%X'), m.type, m.text[:150]))
+        page.on("request", lambda r: r.is_navigation_request() and print("   navreq", time.strftime('%X'), r.url))
+        page.on("websocket", lambda ws: ws.on("framereceived", lambda f: print("   wsrecv", time.strftime('%X'), str(f)[:200])))
+        page.on("framenavigated", lambda f: f == page.main_frame and print(f"   nav: {time.strftime('%X')} {f.url}"))
 
 def track_job(page):
     def onresp(r):
@@ -124,6 +129,39 @@ def flow_validation(page):
     expect(page.get_by_test_id("job-status-badge").first).to_have_text(re.compile("Idle", re.I))
     assert not problems, "; ".join(problems)
 
+def flow_validation_inline(page):
+    """F-001 retest: inline messages after edit, Start disabled, nothing POSTed, messages clear when valid."""
+    posts = []
+    page.on("request", lambda r: r.method == "POST" and r.url.endswith("/api/jobs") and posts.append(r.url))
+    page.goto(BASE + "/")
+    expect(page.get_by_test_id("model-input")).to_have_value("gpt-4o")
+    start = page.get_by_test_id("start-job-button")
+    mErr, uErr = page.get_by_test_id("model-error"), page.get_by_test_id("arena_url-error")
+    expect(mErr).to_have_count(0); expect(uErr).to_have_count(0)  # not on first load
+    page.get_by_test_id("roadmap-input").fill(roadmap(2, f"test_{SUF} validation"))
+    expect(page.get_by_test_id("steps-found")).to_have_text("2 steps found")
+    expect(start).to_be_enabled()
+    model, url = page.get_by_test_id("model-input"), page.get_by_test_id("arena-url-input")
+    for val in ("", "   "):
+        model.fill(val)
+        expect(mErr).to_have_text("Model is required"); expect(mErr).to_be_visible()
+        expect(model).to_have_attribute("aria-invalid", "true")
+        expect(start).to_be_disabled()
+    model.fill("gpt-4o")
+    expect(mErr).to_have_count(0); expect(start).to_be_enabled()
+    for val, msg in (("ftp://localhost:9090", "Use an http:// or https:// URL"), ("localhost:9090", "Use an http:// or https:// URL"), ("", "required")):
+        url.fill(val)
+        expect(uErr).to_contain_text(msg); expect(uErr).to_be_visible()
+        expect(start).to_be_disabled()
+    # both errors at once
+    model.fill("")
+    expect(mErr).to_be_visible(); expect(uErr).to_be_visible()
+    url.fill("http://localhost:9090"); model.fill("gpt-4o")
+    expect(uErr).to_have_count(0); expect(mErr).to_have_count(0); expect(start).to_be_enabled()
+    start.click(force=False, trial=True)  # clickable, not covered
+    expect(page.get_by_test_id("job-status-badge").first).to_have_text(re.compile("Idle", re.I))
+    assert not posts, f"POST /api/jobs sent during validation: {posts}"
+
 def flow_run_job(page):
     page.goto(BASE + "/")
     expect(page.get_by_test_id("model-input")).to_have_value("gpt-4o")
@@ -144,8 +182,11 @@ def flow_run_job(page):
         for i in range(1, n + 1):
             s = page.get_by_test_id(f"step-item-{i}").get_attribute("data-status"); seen[i].add(s)
         done = sum("done" in seen[i] for i in seen)
-        if dl_enabled_at is None and page.get_by_test_id("download-zip-button").is_enabled():
-            dl_enabled_at = done
+        snap = page.evaluate("""() => [document.querySelector('[data-testid=job-progress]').innerText,
+            !document.querySelector('[data-testid=download-zip-button]').disabled,
+            document.querySelectorAll('[data-testid^=step-item-][data-status=done]').length]""")
+        if dl_enabled_at is None and snap[1]:
+            dl_enabled_at = snap[2]  # done steps in the same DOM snapshot
         log_counts.add(page.get_by_test_id("tab-log").inner_text())
         if page.get_by_test_id("job-status-badge").first.inner_text().strip().lower() in ("done", "error"): break
         page.wait_for_timeout(250)  # polling sampler interval
