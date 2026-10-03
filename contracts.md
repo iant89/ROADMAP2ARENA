@@ -164,7 +164,8 @@ Log levels: `info|ok|warn|error`; the job keeps the last 500 entries.
   (replacing a PAT with another PAT is allowed); a PAT is also refused while a device code is pending.
 - The token (PAT or OAuth alike) is stored Fernet-encrypted (`token_enc`) in Mongo (`integrations`,
   `_id: "github"`) with `R2A_SECRET_KEY` from backend/.env; saving without a valid key is a 409 with
-  the key-generation hint. A changed key makes the stored token unreadable (`token_error`, reconnect).
+  the key-generation hint. `./setup.sh` generates the key when it is missing or empty
+  (`scripts/ensure_secret_key.py`) and never overwrites an existing one. A changed key makes the stored token unreadable (`token_error`, reconnect).
   A plaintext token from a pre-release build is encrypted on first read. `R2A_GITHUB_TOKEN` in
   .env overrides everything (`auth_method: env`; connect/disconnect from the UI are 409).
 - The token is never returned, logged, put in argv, the remote URL or .git/config: `git push` gets it

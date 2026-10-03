@@ -131,6 +131,9 @@ if [ -f backend/requirements.txt ]; then
   [ -d venv ] || python3 -m venv venv
   ./venv/bin/pip install --upgrade pip
   ./venv/bin/pip install -r backend/requirements.txt
+  # R2A_SECRET_KEY (Fernet key for the stored GitHub token): generated once, never overwritten
+  log "backend/.env: R2A_SECRET_KEY"
+  ./venv/bin/python scripts/ensure_secret_key.py backend/.env
   [ -f backend/server.py ] && HAS_BACKEND=1
 else
   echo "backend/requirements.txt not found - skipping backend venv"
