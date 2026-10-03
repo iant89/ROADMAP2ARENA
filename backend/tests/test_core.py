@@ -28,6 +28,7 @@ import httpx  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
 from arena_client import ArenaClient, build_prompt  # noqa: E402
+from providers import legacy_base  # noqa: E402
 from artifact_extractor import clean_zip_path, count_unnamed_blocks, extract_artifacts  # noqa: E402
 import git_cli  # noqa: E402
 import git_diff  # noqa: E402
@@ -204,7 +205,7 @@ class PromptAndClientTests(unittest.IsolatedAsyncioTestCase):
         create = AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="new response"))]))
         fake = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)), close=AsyncMock())
         with patch("arena_client.AsyncOpenAI", return_value=fake) as factory:
-            client = ArenaClient("http://gateway.test/", "test-model", 20)
+            client = ArenaClient(legacy_base("http://gateway.test/"), "test-model", 20)
         self.assertEqual(factory.call_args.kwargs["base_url"], "http://gateway.test/v1")
         self.assertEqual(factory.call_args.kwargs["max_retries"], 0)
         client.add_turn("old prompt", "old response")

@@ -25,12 +25,32 @@ extension. See the [gateway setup and security guide](docs/arena2api.md).
 - Receive in-app alerts, browser notifications, webhooks, and SMTP email, with
   per-event settings; watch pushed GitHub branches for PR and CI changes.
 - Save runtime defaults for the gateway URL, model, step delay, and request timeout.
+- Run jobs against any OpenAI-compatible provider (OpenAI, OpenRouter, Groq, Ollama,
+  LM Studio, arena2api or a custom endpoint) - see [Providers](#providers).
 - Run the included real gateway independently or alongside the app, with an
   optional server-only HTTP API key.
 
 Jobs currently have independent repositories. **Projects / importing an existing
 repository as job context is planned, not implemented.** Generated code is stored
 and committed, not executed or automatically validated by this app.
+
+## Providers
+
+Jobs can run against any OpenAI-compatible API. In **Settings > Providers** add a named
+provider (presets: OpenAI, OpenRouter, Groq, Ollama, LM Studio, arena2api (local), custom)
+with its base URL, an optional API key and optional extra headers; use **Test connection**
+/ **Fetch models** to check it (`GET {base}/models`), and mark one as the default. The
+Create job form then picks a provider and a model (fetched list or free text).
+
+- API keys are encrypted with `R2A_SECRET_KEY` (Fernet, same as the GitHub token), are
+  write-only and are never returned, logged, copied to jobs or included in error messages.
+  A stored key is only sent to the host it was saved for.
+- Jobs store the provider id plus a non-secret snapshot (name, base URL).
+- On first start after upgrading, the existing gateway URL setting becomes the default
+  provider "arena2api (local)" (`<url>/v1`), so existing setups and old jobs keep working.
+- `ARENA2API_API_KEY` stays server-side: a provider **without its own key** whose base URL
+  is exactly `ARENA2API_URL` + `/v1` (such as the migrated provider) uses it, and legacy
+  jobs keep the exact-`ARENA2API_URL` rule. A key saved on the provider takes precedence.
 
 ## Architecture
 

@@ -61,3 +61,6 @@ export function relativeTime(iso) {
   if (s < 86400) return `${Math.round(s / 3600)} h ago`
   return formatDateTime(iso)
 }
+
+// Provider name for a job: its provider snapshot, or "arena2api" for a legacy (pre-provider) job.
+export const providerName = (provider) => provider?.name || 'arena2api'

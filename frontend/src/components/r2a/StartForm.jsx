@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { CircleAlert, PlusCircle, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { useProviders } from '@/hooks/useProviders'
+import { modelError as modelErrorOf, providerError } from '@/lib/providerForm'
+import ProviderModelFields from './ProviderModelFields'
 
 function Field({ id, label, hint, error, children }) {
   return (
@@ -23,32 +25,22 @@ function Field({ id, label, hint, error, children }) {
   )
 }
 
-function isHttpUrl(value) {
-  try {
-    const u = new URL(value.trim())
-    return (u.protocol === 'http:' || u.protocol === 'https:') && Boolean(u.host)
-  } catch {
-    return false
-  }
-}
-
 // One size and font for every field (text-base on mobile avoids iOS focus zoom).
 const fieldText = 'font-mono text-base sm:text-sm'
-const inputCls = cn('bg-card h-9', fieldText)
 
 // Create job form. Submitting enqueues the job; it starts at once when nothing is running.
-export default function StartForm({ form, onChange, stepCount, onSubmit, onLoadSample, submitting, queueInfo, settings, onOpenSettings, submitLabel = 'Add to queue' }) {
+export default function StartForm({ form, onChange, stepCount, onSubmit, onLoadSample, submitting, queueInfo, settings, onOpenSettings, submitLabel = 'Add to queue', legacyUrl = null }) {
+  const { data: providerData, error: providersError } = useProviders()
+  const providers = providerData?.providers ?? null
   // Inline errors appear once a field has been edited (avoids a flash before config defaults load).
   const [touched, setTouched] = useState({})
   const set = (key) => (e) => {
     setTouched((t) => (t[key] ? t : { ...t, [key]: true }))
     onChange({ ...form, [key]: e.target.value })
   }
-  const modelError = form.model.trim() ? null : 'Model is required'
-  const urlError = !form.arena_url.trim()
-    ? 'arena2api base URL is required'
-    : isHttpUrl(form.arena_url) ? null : 'Use an http:// or https:// URL'
-  const disabled = submitting || stepCount === 0 || Boolean(urlError) || Boolean(modelError)
+  const modelError = modelErrorOf(form)
+  const provError = providerError(form, providers)
+  const disabled = submitting || stepCount === 0 || !providers || Boolean(provError) || Boolean(modelError)
   const ahead = (queueInfo?.running ? 1 : 0) + (queueInfo?.waiting ?? 0)
   const queueHint = !queueInfo
     ? ''
@@ -57,13 +49,24 @@ export default function StartForm({ form, onChange, stepCount, onSubmit, onLoadS
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-[1.4fr_1fr]">
-        <Field id="arena_url" label="arena2api base URL" error={touched.arena_url ? urlError : null}>
-          <Input id="arena_url" data-testid="arena-url-input" aria-invalid={Boolean(touched.arena_url && urlError)} aria-describedby={touched.arena_url && urlError ? 'arena_url-error' : undefined} className={inputCls} value={form.arena_url} onChange={set('arena_url')} placeholder="http://localhost:9090" />
-        </Field>
-        <Field id="model" label="Model" error={touched.model ? modelError : null}>
-          <Input id="model" data-testid="model-input" aria-invalid={Boolean(touched.model && modelError)} aria-describedby={touched.model && modelError ? 'model-error' : undefined} className={inputCls} value={form.model} onChange={set('model')} placeholder="gpt-4o" />
-        </Field>
+      <div className="space-y-2">
+        <ProviderModelFields
+          value={form}
+          onChange={(next) => {
+            if (next.model !== form.model) setTouched((t) => (t.model ? t : { ...t, model: true }))
+            onChange(next)
+          }}
+          providers={providers}
+          fallbackModel={settings?.model || ''}
+          legacyUrl={legacyUrl}
+          showErrors={{ provider: Boolean(providers), model: Boolean(touched.model) }}
+        />
+        {providersError && !providers && <p className="text-xs font-medium text-coral" data-testid="providers-load-error">Could not load providers: {providersError}</p>}
+        {providers && providers.length === 0 && onOpenSettings && (
+          <p className="text-xs text-muted-foreground" data-testid="no-providers-hint">
+            No providers yet - <button type="button" className="font-medium text-foreground underline underline-offset-2" onClick={onOpenSettings}>add one in Settings</button>.
+          </p>
+        )}
       </div>
       <Field id="project_context" label="Project context" hint="Sent with step 1">
         <Textarea

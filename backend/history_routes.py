@@ -41,7 +41,7 @@ async def _transcript(job_id: str) -> dict:
         })
     return {
         "job_id": job_id, "title": job.get("title"), "status": job["status"], "model": job["model"],
-        "arena_url": job["arena_url"], "project_context": job.get("project_context", ""),
+        "arena_url": job["arena_url"], "provider": job.get("provider"), "project_context": job.get("project_context", ""),
         "created_at": job["created_at"], "finished_at": job.get("finished_at"),
         "step_total": job["step_total"], "steps_done": job["steps_done"], "turns": turns,
     }
@@ -98,7 +98,9 @@ def transcript_html(t: dict) -> str:
         f"<style>{CSS}</style></head><body><main>",
         f"<h1>{e(t['title'] or 'Untitled roadmap')}</h1>",
         f'<div class="meta">{_badge(t["status"])} &nbsp;{t["steps_done"]}/{t["step_total"]} steps done &middot; '
-        f'model <code>{e(t["model"])}</code> via <code>{e(t["arena_url"])}</code></div>',
+        f'model <code>{e(t["model"])}</code> via '
+        + (f'{e(t["provider"]["name"])} ' if t.get("provider") else "")
+        + f'<code>{e(t["arena_url"])}</code></div>',
         f'<div class="meta">Job <code>{e(t["job_id"])}</code> &middot; created {e(t["created_at"])}'
         + (f' &middot; finished {e(t["finished_at"])}' if t.get("finished_at") else "") + "</div>",
     ]
@@ -179,5 +181,6 @@ async def clone_source(job_id: str):
     """Inputs of a job for a prefilled "Clone job" form; POST /api/jobs with cloned_from to submit."""
     job = await _job_or_404(job_id)
     return {"source_job_id": job_id, "title": job.get("title"), "arena_url": job["arena_url"], "model": job["model"],
+            "provider": job.get("provider"),
             "project_context": job.get("project_context", ""), "roadmap_md": job.get("roadmap_md", ""),
             "step_total": job["step_total"]}
