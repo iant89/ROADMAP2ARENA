@@ -1,0 +1,4 @@
+# Keep the application's exact pins while satisfying the pinned gateway's requirements.
+# Initialise services/arena2api before installing this file.
+-r requirements.txt
+-r ../services/arena2api/requirements.txt

@@ -3,7 +3,8 @@
 Starts `uvicorn server:app` (no reload) on a free port with DB_NAME pointing at a
 throwaway database (roadmap2arena_test_<hex>) and a short step delay, so tests can
 delete "all finished jobs", change settings etc. without touching the dev data.
-The database is dropped on exit. Extra env vars can be passed (e.g. data dirs).
+The database and default temporary repo directory are removed on exit. Real integration
+credentials/endpoints are disabled by default; extra_env can supply local stand-ins.
 
     with IsolatedServer() as base:      # base = "http://127.0.0.1:<port>/api"
         httpx.get(f"{base}/queue")
@@ -14,17 +15,22 @@ import os
 import secrets
 import socket
 import subprocess
+import sys
 import time
+import tempfile
 
 import httpx
+from cryptography.fernet import Fernet
+from dotenv import dotenv_values
 
 BACKEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-UVICORN = "/app/venv/bin/uvicorn"
 
 
 def _env_file() -> dict:
-    return dict(l.strip().split("=", 1) for l in open(os.path.join(BACKEND_DIR, ".env"))
-                if "=" in l and not l.lstrip().startswith("#"))
+    """Effective settings: optional .env defaults, overridden by the process environment."""
+    defaults = {k: v for k, v in dotenv_values(os.path.join(BACKEND_DIR, ".env")).items()
+                if v is not None}
+    return {**defaults, **os.environ}
 
 
 def free_port() -> int:
@@ -41,35 +47,52 @@ class IsolatedServer:
         self.step_delay = step_delay
         self.extra_env = extra_env or {}
         self.proc: subprocess.Popen | None = None
+        self.mongo_url: str | None = None
         self.log_path = f"/tmp/{self.db_name}.log"
 
     def __enter__(self) -> str:
-        env = {**os.environ, "DB_NAME": self.db_name, "ARENA_STEP_DELAY_SECONDS": str(self.step_delay),
-               "PYTHONDONTWRITEBYTECODE": "1",
-               # throwaway data dirs must never pull in the checkout's legacy backend/data/repos
-               "R2A_MIGRATE_LEGACY_DATA": "0", **self.extra_env}
+        self._data_dir = tempfile.TemporaryDirectory(prefix="r2a-test-data-")
+        env = {**_env_file(),
+               # A test must never inherit real integration credentials/endpoints or job repos.
+               "ARENA2API_URL": os.environ.get("TEST_STUB_URL", "http://127.0.0.1:9090"),
+               "ARENA2API_API_KEY": "",
+               "R2A_GITHUB_TOKEN": "", "GITHUB_OAUTH_CLIENT_ID": "",
+               "GITHUB_API_URL": "http://127.0.0.1:9", "GITHUB_OAUTH_URL": "http://127.0.0.1:9",
+               "R2A_SECRET_KEY": Fernet.generate_key().decode(), "R2A_DATA_DIR": self._data_dir.name,
+               **self.extra_env, "DB_NAME": self.db_name,
+               "ARENA_STEP_DELAY_SECONDS": str(self.step_delay), "PYTHONDONTWRITEBYTECODE": "1",
+               # Never pull a checkout's legacy repos into a throwaway test server.
+               "R2A_MIGRATE_LEGACY_DATA": "0"}
+        self.mongo_url = env.get("MONGO_URL")
         self._log = open(self.log_path, "w")
-        self.proc = subprocess.Popen([UVICORN, "server:app", "--host", "127.0.0.1", "--port", str(self.port)],
-                                     cwd=BACKEND_DIR, env=env, stdout=self._log, stderr=subprocess.STDOUT)
-        end = time.time() + 30
-        while time.time() < end:
-            if self.proc.poll() is not None:
-                raise RuntimeError(f"isolated backend exited: {open(self.log_path).read()[-2000:]}")
-            try:
-                if httpx.get(f"{self.base}/queue", timeout=2).status_code == 200:
-                    # suites that also hit a "direct" URL (default :8001) must use this server instead
-                    self._saved_env = {k: os.environ.get(k) for k in ("TEST_DIRECT_URL", "R2A_TEST_ISOLATED")}
-                    os.environ["TEST_DIRECT_URL"] = self.base
-                    os.environ["R2A_TEST_ISOLATED"] = "1"
-                    return self.base
-            except httpx.HTTPError:
-                pass
-            time.sleep(0.3)
-        raise RuntimeError("isolated backend did not start")
+        try:
+            self.proc = subprocess.Popen(
+                [sys.executable, "-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", str(self.port)],
+                cwd=BACKEND_DIR, env=env, stdout=self._log, stderr=subprocess.STDOUT)
+            end = time.time() + 30
+            while time.time() < end:
+                if self.proc.poll() is not None:
+                    with open(self.log_path) as log:
+                        raise RuntimeError(f"isolated backend exited: {log.read()[-2000:]}")
+                try:
+                    if httpx.get(f"{self.base}/queue", timeout=2).status_code == 200:
+                        # Direct-port checks must also stay on this isolated server.
+                        self._saved_env = {k: os.environ.get(k) for k in ("TEST_DIRECT_URL", "R2A_TEST_ISOLATED")}
+                        os.environ["TEST_DIRECT_URL"] = self.base
+                        os.environ["R2A_TEST_ISOLATED"] = "1"
+                        return self.base
+                except httpx.HTTPError:
+                    pass
+                time.sleep(0.3)
+            raise RuntimeError("isolated backend did not start")
+        except BaseException:
+            # __exit__ is not invoked by a with statement if __enter__ fails.
+            self.__exit__(*sys.exc_info())
+            raise
 
     def db(self):
         from pymongo import MongoClient
-        return MongoClient(_env_file()["MONGO_URL"], serverSelectionTimeoutMS=5000)[self.db_name]
+        return MongoClient(self.mongo_url or _env_file()["MONGO_URL"], serverSelectionTimeoutMS=5000)[self.db_name]
 
     def __exit__(self, *exc) -> None:
         for k, v in getattr(self, "_saved_env", {}).items():
@@ -83,11 +106,18 @@ class IsolatedServer:
                 self.proc.wait(10)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+                self.proc.wait(10)
         self._log.close()
         try:
-            self.db().client.drop_database(self.db_name)
+            client = self.db().client
+            try:
+                client.drop_database(self.db_name)
+            finally:
+                client.close()
         except Exception:  # noqa: BLE001
             pass
+        finally:
+            self._data_dir.cleanup()
 
 
 def run_tests(namespace: dict) -> int:

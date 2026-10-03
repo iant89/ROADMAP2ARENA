@@ -719,7 +719,7 @@ def test_no_token_in_logs_and_no_outbound():
 if __name__ == "__main__":
     from isolated_server import run_tests
     names = sys.argv[1:]
-    stub_proc = subprocess.Popen(["/app/venv/bin/python", os.path.join(HERE, "github_stub.py"), "--port", str(GH_PORT),
+    stub_proc = subprocess.Popen([sys.executable, os.path.join(HERE, "github_stub.py"), "--port", str(GH_PORT),
                                   "--root", GH_ROOT], stdout=open(STUB_LOG, "w"), stderr=subprocess.STDOUT)
     code = 1
     try:

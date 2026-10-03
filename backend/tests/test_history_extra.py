@@ -372,13 +372,18 @@ def test_zz_cleanup():
     for jid in CREATED:
         wait(jid, 30)
     assert c.post(f"{BASE}/settings/reset").status_code == 200
-    from pymongo import MongoClient
-    env = dict(l.strip().split("=", 1) for l in open("/app/backend/.env") if "=" in l and not l.startswith("#"))
-    db = MongoClient(env["MONGO_URL"], serverSelectionTimeoutMS=5000)[env["DB_NAME"]]
-    ids = set(CREATED) | {j["id"] for j in db.jobs.find({"$or": [{"restarted_from": {"$in": CREATED}},
-                                                                  {"cloned_from": {"$in": CREATED}}]}, {"_id": 0, "id": 1})}
-    db.steps.delete_many({"job_id": {"$in": list(ids)}})
-    db.jobs.delete_many({"id": {"$in": list(ids)}})
+    # Delete through the API of the backend under test (TEST_BASE_URL), never a hardcoded
+    # /app/backend/.env database: that pointed at the live app DB when testing another checkout.
+    created = set(CREATED)
+    ids = set(CREATED) | {j["job_id"] for j in get("/jobs?limit=200").json()
+                          if j.get("restarted_from") in created or j.get("cloned_from") in created}
+    for jid in ids:
+        if c.get(f"{BASE}/jobs/{jid}").json().get("status") in ("queued", "paused", "running"):
+            wait(jid, 30)
+    ids = sorted(ids)
+    for i in range(0, len(ids), 100):
+        r = c.post(f"{BASE}/jobs/bulk-delete", json={"job_ids": ids[i:i + 100]})
+        assert r.status_code == 200, r.text
     q = get("/queue").json()
     assert q["running"] is None and q["count"] == 0, q
 

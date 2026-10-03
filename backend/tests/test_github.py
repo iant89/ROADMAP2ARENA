@@ -674,7 +674,7 @@ def test_notification_settings_include_github_events():
 
 
 if __name__ == "__main__":
-    stub = subprocess.Popen(["/app/venv/bin/python", os.path.join(os.path.dirname(os.path.abspath(__file__)), "github_stub.py"),
+    stub = subprocess.Popen([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "github_stub.py"),
                              "--port", str(GH_PORT), "--root", GH_ROOT], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     try:
         for _ in range(50):
