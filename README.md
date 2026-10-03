@@ -208,8 +208,9 @@ The launcher allocates a loopback-only random MongoDB port and temporary storage
 runs controlled local providers, and removes its Compose project on exit. You can
 instead supply an explicit disposable loopback `TEST_MONGO_URL`. See the
 [validation guide](docs/integration-validation.md) for setup, coverage and safety.
-**Actual Docker/MongoDB/CI execution remains unverified in this sandbox**; the
-infrastructure and synthetic gateway fixture checks pass, not the persistence gate.
+The persistence gate has passed against a real throwaway MongoDB 8.0 supplied via
+`TEST_MONGO_URL` (2026-10-03); the Docker Compose path and the CI workflow itself
+have not been executed yet.
 
 Database integration suites also can be run individually with MongoDB and a local
 arena stand-in. Start the

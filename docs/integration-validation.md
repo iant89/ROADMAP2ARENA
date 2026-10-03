@@ -1,9 +1,16 @@
 # MongoDB-backed integration validation
 
-**Current status: harness/CI prepared; Mongo-backed execution is still blocked in
-the Arena sandbox.** There is no MongoDB binary or Docker/Podman runtime here.
-An alternate official-image registry route also failed TLS. No mock database is
-substituted and no live Arena session is needed for these tests.
+**Current status: Mongo-backed execution verified locally; CI not yet executed.**
+On 2026-10-03 the gate ran against a real throwaway MongoDB 8.0.32 (`mongod` on a
+loopback port, temporary dbpath, inside a network namespace with no outside
+access) via `TEST_MONGO_URL=... ./venv/bin/python backend/tests/integration.py`:
+all suites passed, including the 7 `test_gateway_pipeline.py` cases. Docker
+Compose (`./test-integration.sh` without `TEST_MONGO_URL`) and the GitHub Actions
+workflow were not run there. No mock database is substituted and no live Arena
+session is needed for these tests.
+
+Originally (2026-10-02) execution was blocked in the Arena sandbox: there was no
+MongoDB binary or Docker/Podman runtime, and an alternate image route failed TLS.
 
 This is the next gate after [the initial gateway integration](arena2api-integration-2026-10-02.md).
 It tests real job persistence and lifecycle without contacting real providers.

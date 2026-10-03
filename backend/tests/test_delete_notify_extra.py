@@ -10,6 +10,7 @@ Run one section per process (each < 2 min):
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import sys
@@ -25,7 +26,7 @@ from aiosmtpd.smtp import AuthResult
 
 from isolated_server import IsolatedServer, free_port
 
-STUB = "http://127.0.0.1:9090"
+STUB = os.environ.get("TEST_STUB_URL", "http://127.0.0.1:9090")
 B = ""
 SRV: IsolatedServer | None = None
 SUFFIX = secrets.token_hex(3)
