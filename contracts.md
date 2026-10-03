@@ -372,13 +372,13 @@ blocks are never stored as artifacts.
   fallback. Runs self-contained checks, the new real-gateway job pipeline, and
   isolated deletion/notifications/Git/GitHub/reload regressions. Reload probes
   execute in a temporary source copy, not the user's checkout. CI is prepared in
-  `.github/workflows/integration.yml`; actual Docker/Mongo/CI execution remains
-  unverified here. See [validation guide](docs/integration-validation.md).
+  `.github/workflows/integration.yml`. Verified against a real throwaway MongoDB
+  8.0 via `TEST_MONGO_URL` (2026-10-03); the Compose path and CI have not run yet. See [validation guide](docs/integration-validation.md).
 - `backend/tests/test_gateway_pipeline.py`: seven prepared cases against real
   Mongo + backend + SDK + pinned gateway with only Arena HTTP mocked. Persistence,
   artifacts/Git/export, fail-fast/resume, disconnected recovery, credential trust,
-  stop/resume, queue and deletion; no real provider. Not counted as passes until
-  run with an explicit test MongoDB.
+  stop/resume, queue and deletion; no real provider. Passed 7/7 against a real
+  throwaway MongoDB 8.0 (2026-10-03).
 - `backend/tests/test_gateway.py`: actual pinned gateway + real OpenAI SDK with
   ASGI and mocked Arena transport; synthetic session/model data only. Tests local
   configuration, credential boundaries/redaction, auth, disconnected readiness,

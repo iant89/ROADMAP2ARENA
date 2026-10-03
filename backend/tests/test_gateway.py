@@ -207,6 +207,16 @@ class CredentialTests(unittest.TestCase):
         self.assertNotIn(DUMMY_KEY, message)
         self.assertIn("[redacted gateway key]", message)
 
+    def test_401_explains_gateway_key_mismatch(self):
+        request = httpx.Request("POST", "http://127.0.0.1:9090/v1/chat/completions")
+        response = httpx.Response(401, json={"detail": "Invalid API key"}, request=request)
+        message = orchestrator.describe_error(APIStatusError("unauthorized", response=response, body=None),
+                                              "http://127.0.0.1:9090", 20)
+        self.assertIn("arena2api returned 401: Invalid API key", message)
+        self.assertIn("ARENA2API_API_KEY", message)
+        self.assertIn("GATEWAY_API_KEY", message)
+        self.assertNotIn(DUMMY_KEY, message)
+
     def test_redaction_is_noop_without_key(self):
         with patch.object(app_settings.env, "ARENA2API_API_KEY", ""):
             self.assertEqual(app_settings.redact_gateway_key("unchanged message"), "unchanged message")

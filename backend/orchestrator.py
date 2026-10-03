@@ -26,6 +26,8 @@ from artifact_extractor import count_unnamed_blocks, extract_artifacts
 
 LOG_LIMIT = 500
 HINT_503 = "check that the arena2api Chrome tab is open and pushing tokens"
+HINT_401 = ("check that ARENA2API_API_KEY in backend/.env matches GATEWAY_API_KEY in gateway/.env - the key is "
+            "only sent when the job URL is exactly ARENA2API_URL")
 
 logger = logging.getLogger("roadmap2arena.orchestrator")
 # Registry of running job tasks by job_id (single uvicorn process).
@@ -108,6 +110,8 @@ def _describe_error(exc: Exception, arena_url: str, timeout_seconds: float) -> s
             msg += f": {detail}"
         if code == 503:
             msg += f" - {HINT_503}"
+        elif code == 401:
+            msg += f" - {HINT_401}"
         return msg
     if isinstance(exc, openai.APITimeoutError):
         return f"arena2api request timed out after {timeout_seconds:g}s"
