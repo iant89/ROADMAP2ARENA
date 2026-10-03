@@ -27,6 +27,7 @@ from artifact_extractor import count_unnamed_blocks, extract_artifacts
 
 LOG_LIMIT = 500
 HINT_503 = providers.HINT_503
+HINT_401 = providers.HINT_401_GATEWAY
 
 logger = logging.getLogger("roadmap2arena.orchestrator")
 # Registry of running job tasks by job_id (single uvicorn process).

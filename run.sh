@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
-# Local development: backend (if present) on 127.0.0.1:8001 and Vite on 5173.
-# Optional: STUB=1 also starts the local arena2api stand-in on 127.0.0.1:9090
-# (backend/tests/arena_stub.py - NOT the real arena2api). Ctrl+C stops all.
+# Local development: app backend :8001, Vite :5173.
+# STUB=1 starts the canned arena stand-in :9090; GATEWAY=1 starts real arena2api.
+# Otherwise use an already-running external gateway. STUB/GATEWAY are mutually exclusive.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
+
+STUB="${STUB:-0}"
+GATEWAY="${GATEWAY:-0}"
+for value in "$STUB" "$GATEWAY"; do
+  case "$value" in 0|1) ;; *) echo "STUB and GATEWAY must be 0 or 1" >&2; exit 1 ;; esac
+done
+if [ "$STUB" = "1" ] && [ "$GATEWAY" = "1" ]; then
+  echo "Choose STUB=1 OR GATEWAY=1, not both (they share the gateway port)" >&2
+  exit 1
+fi
 
 PIDS=()
 cleanup() {
@@ -15,19 +25,30 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
+# Validate before spawning anything, so failed setup does not leave a partial stack.
 if [ -f backend/server.py ]; then
-  [ -x venv/bin/uvicorn ] || { echo "venv/bin/uvicorn missing - run ./setup.sh or create ./venv first" >&2; exit 1; }
+  [ -x venv/bin/uvicorn ] || { echo "venv/bin/uvicorn missing - create ./venv and install dependencies" >&2; exit 1; }
   [ -f backend/.env ] || { echo "backend/.env missing - copy backend/.env.example and adjust" >&2; exit 1; }
+fi
+if [ "$GATEWAY" = "1" ]; then
+  ./run-gateway.sh --check >/dev/null
+fi
+
+if [ "$STUB" = "1" ]; then
+  (cd backend && exec ../venv/bin/uvicorn tests.arena_stub:app --host 127.0.0.1 --port 9090) &
+  PIDS+=("$!")
+  echo "arena2api stand-in (canned responses): http://127.0.0.1:9090"
+elif [ "$GATEWAY" = "1" ]; then
+  ./run-gateway.sh &
+  PIDS+=("$!")
+  echo "real arena2api started - install/connect its browser extension separately"
+fi
+
+if [ -f backend/server.py ]; then
   if ! (exec 3<>/dev/tcp/127.0.0.1/27017) 2>/dev/null; then
-    echo "warning: nothing listening on 127.0.0.1:27017 - start MongoDB first" >&2
+    echo "warning: nothing listening on 127.0.0.1:27017 - start/configure MongoDB first" >&2
   fi
-  if [ "${STUB:-0}" = "1" ]; then
-    (cd backend && exec ../venv/bin/uvicorn tests.arena_stub:app --host 127.0.0.1 --port 9090) &
-    PIDS+=("$!")
-    echo "arena2api stub: http://127.0.0.1:9090"
-  fi
-  # Watch only the backend source: job repos (R2A_DATA_DIR, default ./data) and tests/ must never
-  # trigger a reload - that would kill a running job (F-006). Excludes need watchfiles installed.
+  # Repos stay outside backend/. Excludes need watchfiles installed (F-006).
   (cd backend && exec ../venv/bin/uvicorn server:app --host 127.0.0.1 --port 8001 --reload \
     --reload-dir "$PWD" --reload-exclude "$PWD/tests" \
     --reload-exclude 'tests/*' --reload-exclude 'data/*' --reload-exclude '*.git*') &
@@ -37,8 +58,16 @@ else
   echo "backend/server.py not found - starting frontend only"
 fi
 
-(cd frontend && VITE_BACKEND_URL=http://127.0.0.1:8001 exec yarn dev --port 5173) &
+# Browser requests stay same-origin; Vite proxies /api to the backend server-side.
+# For a remote/live preview set R2A_DEV_HOST=0.0.0.0, never a browser localhost API URL.
+DEV_HOST="${R2A_DEV_HOST:-127.0.0.1}"
+(cd frontend && VITE_BACKEND_URL='' exec yarn dev --host "$DEV_HOST" --port 5173) &
 PIDS+=("$!")
-echo "frontend: http://127.0.0.1:5173"
+echo "frontend: http://${DEV_HOST}:5173"
 
-wait
+# Any crashed/exited service tears down the rest rather than leaving a broken stack.
+set +e
+wait -n "${PIDS[@]}"
+status=$?
+set -e
+exit "$status"

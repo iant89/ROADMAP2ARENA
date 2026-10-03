@@ -129,12 +129,20 @@ def test_clone_source_and_clone():
     assert bad.status_code == 422 and "cloned_from" in bad.json()["detail"]
 
 
+def _api_delete(ids):
+    """Delete test jobs through the API of the backend under test (BASE), never a hardcoded
+    /app/backend/.env database - that is the live app DB when another checkout is tested."""
+    ids = sorted(ids)
+    for i in range(0, len(ids), 100):
+        r = c.post(f"{BASE}/jobs/bulk-delete", json={"job_ids": ids[i:i + 100]})
+        assert r.status_code == 200, r.text
+
+
 def test_zz_cleanup():
-    from pymongo import MongoClient
-    env = dict(l.strip().split("=", 1) for l in open("/app/backend/.env") if "=" in l and not l.startswith("#"))
-    db = MongoClient(env["MONGO_URL"], serverSelectionTimeoutMS=5000)[env["DB_NAME"]]
-    db.steps.delete_many({"job_id": {"$in": CREATED}})
-    db.jobs.delete_many({"id": {"$in": CREATED}})
+    for jid in CREATED:
+        if c.get(f"{BASE}/jobs/{jid}").json().get("status") in ("queued", "paused", "running"):
+            wait(jid)
+    _api_delete(set(CREATED))
 
 
 if __name__ == "__main__":

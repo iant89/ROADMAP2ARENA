@@ -1,7 +1,8 @@
 # ROADMAP2ARENA - API contracts and integration plan
 
-All routes are under `/api` on the FastAPI backend (127.0.0.1:8001; Caddy proxies
-`/api/*` from :8080). Ids are UUID4 strings, timestamps are ISO 8601 UTC
+Application routes are under `/api` on the FastAPI job backend (127.0.0.1:8001;
+Caddy proxies `/api/*` from :8080). The separately launched arena2api gateway
+uses its own `/v1` and health/extension routes on loopback :9090 (see below). Ids are UUID4 strings, timestamps are ISO 8601 UTC
 (`2026-10-01T23:52:35.726Z`). Mongo `_id` is never returned. Errors use
 FastAPI's `{"detail": "..."}` shape.
 
@@ -96,7 +97,12 @@ UI labels: done = "Completed", error = "Failed", queued = "Queued" (not started 
 - `POST /api/jobs` defaults model from settings (provider/URL resolution: see Providers). Each run (new, resumed,
   restarted) reads step delay and request timeout from settings when it starts and logs
   them ("..., step delay 2s, timeout 300s"); a running job keeps its values.
-- No new environment variables. `default_provider_id` / `providers_migrated` live in the same doc
+- The four public settings are unchanged. Optional `ARENA2API_API_KEY` is a
+  server-only environment credential, not a settings/job field. It is sent only
+  to the exact configured `ARENA2API_URL` after whitespace/trailing-slash
+  normalisation; aliases, ports, paths and URL overrides receive no secret.
+  Configured key values echoed in provider errors are redacted before persistence.
+- Providers add no environment variables. `default_provider_id` / `providers_migrated` live in the same doc
   but are managed by the providers API, not `PUT /api/settings`.
 
 ### Providers (backend/providers.py, provider_routes.py)
@@ -125,8 +131,10 @@ optional API key and optional extra headers; arena2api is one preset among other
   `proxy-authorization`, `cookie`, `x-api-key`, `api-key`, `host`, `content-length`,
   `content-type`, `connection`, `transfer-encoding`.
 - Public shape (`GET`, create/update responses):
-  `{id, name, preset, base_url, headers, default_model, api_key_set, api_key_error,
-  is_default, migrated, created_at, updated_at}` (`api_key_error`: null or a message).
+  `{id, name, preset, base_url, headers, default_model, api_key_set, api_key_error, server_key,
+  is_default, migrated, created_at, updated_at}` (`api_key_error`: null or a message;
+  `server_key`: true when the provider has no key of its own and will use the server-only
+  `ARENA2API_API_KEY` - see "Server gateway key"; the key value is never returned).
 - Presets (`GET /api/providers` -> `presets`), each `{id, label, base_url, needs_key, hint}`:
   OpenAI `https://api.openai.com/v1` (key), OpenRouter `https://openrouter.ai/api/v1` (key),
   Groq `https://api.groq.com/openai/v1` (key), Ollama `http://localhost:11434/v1`,
@@ -180,6 +188,14 @@ Jobs:
   `base_url` to another origin (scheme/host/port) while a key is stored -> 422 unless the
   request also sets `api_key` or `clear_api_key`. `POST /providers/test` with `provider_id`
   reuses the stored key only for the stored origin (else 422 "Enter the API key...").
+- Server gateway key (`ARENA2API_API_KEY`, from PR #11): stays server-only (never stored in
+  Mongo, never returned, redacted from errors). Effective key per request:
+  provider jobs, `GET /providers/{id}/models` and `POST /providers/test` use the provider's own
+  key; a provider WITHOUT a key whose `base_url` is exactly `legacy_base(ARENA2API_URL)`
+  (`ARENA2API_URL` + `/v1` after whitespace/trailing-slash normalisation - e.g. the migrated
+  "arena2api (local)") uses `ARENA2API_API_KEY`. Legacy jobs keep PR #11's rule: the key only
+  when the job's `arena_url` is exactly `ARENA2API_URL`. Aliases (127.0.0.1 vs localhost),
+  other ports or paths never receive it.
 - `POST /jobs/{id}/resume` and `/restart` accept `provider_id` too (switches provider and
   refreshes the snapshot). An `arena_url` override without `provider_id` turns the job into a
   legacy job (provider null) - unchanged behaviour for existing clients.
@@ -193,7 +209,7 @@ then the provider's own short error text (max 200 chars, redacted), then a hint:
 
 | Upstream | Hint |
 | --- | --- |
-| 401 | `(API key rejected) - check the API key in Settings > Providers` |
+| 401 | `(API key rejected) - check the API key in Settings > Providers`; for legacy jobs `arena2api returned 401: <detail> - check that ARENA2API_API_KEY in backend/.env matches GATEWAY_API_KEY in gateway/.env - the key is only sent when the job URL is exactly ARENA2API_URL` (PR #11 wording); preset arena2api providers get the same hint plus `, or set this provider's API key in Settings > Providers` |
 | 403 | `(access denied) - the key may lack access to this model, or the account needs credits` |
 | 404 | job: `- model '<model>' not found or wrong base URL; check the model name or fetch the model list`; models/test: `- endpoint not found; check the base URL (it usually ends in /v1)` |
 | 429 | `(rate limit or quota exceeded) - wait, then resume the job` |
@@ -380,11 +396,45 @@ blocks are never stored as artifacts.
   `GET /download`.
 - "Mock mode" banner -> removed; a backend error banner with Retry replaces it.
 
+## Gateway dependency integration
+
+- `services/arena2api` is the unmodified Git submodule from
+  `https://github.com/flay-o/arena2api.git`, pinned at
+  `259e27c2a96c8203cfe6d67140490b0db9f91543`. No declared upstream license was
+  found at this revision; no license grant or relicensing is implied.
+- `./run-gateway.sh` / `python -m gateway` starts it independently of MongoDB and
+  the job API, with loopback :9090, one worker and no reload by default. Startup
+  verifies the local pin without fetching. `--check` validates/imports without
+  a listener or Arena request and reports only whether an API key is configured.
+- Optional `gateway/.env` uses `GATEWAY_HOST`, `GATEWAY_PORT`, `GATEWAY_LOG_LEVEL`,
+  `GATEWAY_API_KEY`; process environment and CLI host/port overrides take precedence.
+  Prefixed settings are mapped to upstream at import time; unrelated `API_KEY`,
+  `PORT`, `DEBUG` are restored afterwards.
+- `GATEWAY=1 ./run.sh` owns the gateway plus the existing job API and dashboard;
+  `STUB=1` uses canned responses instead. The flags are mutually exclusive. With
+  neither set, the gateway must already be running. Ubuntu `setup.sh` has an
+  opt-in independent `<APP_NAME>-gateway.service`; browser setup stays manual.
+- Chrome/Firefox extensions are loaded manually from the submodule. They push
+  session data/models to the private gateway; keep an authorised Arena tab open.
+  Server HTTP health is not equivalent to Arena readiness. Before connection,
+  models contain `waiting-for-extension`, and chat returns 503. Disconnection
+  occurs after 120 seconds without a push; model IDs come from the discovered cache.
+- API-key protection applies **only** to `GET /v1/models` and
+  `POST /v1/chat/completions`. `/health`, `/v1/extension/status` and
+  `POST /v1/extension/push` remain unauthenticated; CORS is broad. Keep the service
+  private even with a key. Caddy does not proxy gateway endpoints. Use a private
+  loopback tunnel for a remote browser; the manifests do not allow arbitrary
+  HTTPS preview origins.
+- See [gateway setup/security](docs/arena2api.md) and
+  [local integration evidence](docs/arena2api-integration-2026-10-02.md). Actual
+  browser pairing/Arena delivery and Ubuntu provisioning have not been verified.
+
 ## Backend implementation
 
-- `settings.py`: every setting from `backend/.env` (MONGO_URL, DB_NAME,
-  ARENA2API_URL, ARENA2API_MODEL, ARENA_STEP_DELAY_SECONDS,
+- `settings.py`: the original seven required settings from `backend/.env`
+  (MONGO_URL, DB_NAME, ARENA2API_URL, ARENA2API_MODEL, ARENA_STEP_DELAY_SECONDS,
   ARENA_REQUEST_TIMEOUT_SECONDS, CORS_ORIGINS); missing values fail at startup.
+  Optional `ARENA2API_API_KEY` is server-only and validates printable ASCII.
 - `server.py`: routes, validation, startup indexes (`jobs.id` unique,
   `steps(job_id,index)` unique), marks leftover running jobs/steps as error
   "interrupted by server restart".
@@ -396,6 +446,9 @@ blocks are never stored as artifacts.
   jobs: `{arena_url}/v1`), api_key = the provider's decrypted key or `sk-no-key`, extra
   provider headers, timeout from settings, max_retries 0), temperature 0.2, no streaming,
   rolling chat history per job; prompt formats match the former mock builder.
+  `orchestrator.describe_error` -> `providers.describe`, which redacts the provider key,
+  header values and the configured `ARENA2API_API_KEY` (as `[redacted gateway key]`) before
+  truncating and storing errors.
 - `artifact_extractor.py`: `BLOCK_RE` for fenced blocks, `lang:path` info string
   or `PATH_COMMENT_RE` first-line comment; `clean_zip_path` for the ZIP.
 - Collections: `jobs` (job doc + log array), `steps` (one doc per step with
@@ -405,7 +458,10 @@ blocks are never stored as artifacts.
 
 - `src/lib/api.js` is the only data layer: fetch to
   `${VITE_BACKEND_URL}/api/...`, GET retries (2, exponential backoff) on network
-  errors/5xx, readable `ApiError` messages.
+  errors/5xx, readable `ApiError` messages. Development and Caddy builds use an
+  empty browser base URL: same-origin `/api` requests. Vite's server-side proxy
+  targets `R2A_BACKEND_TARGET` or loopback :8001; it does not proxy gateway routes.
+  `R2A_DEV_HOST=0.0.0.0` is available for restricted remote previews.
 - `useJob` polls `GET /api/jobs/{id}` every 1.5 s while running/queued/paused;
   transient errors keep the last state and retry. `useQueue` polls `GET /api/queue`
   every 2 s (header status + progress, queue badge, Current job).
@@ -444,6 +500,26 @@ blocks are never stored as artifacts.
 
 ## Testing
 
+- `test-integration.sh` / `backend/tests/integration.py`: explicit disposable real
+  MongoDB gate; optional ephemeral Compose MongoDB, no normal `.env`/database
+  fallback. Runs self-contained checks, the new real-gateway job pipeline, and
+  isolated deletion/notifications/Git/GitHub/reload regressions. Reload probes
+  execute in a temporary source copy, not the user's checkout. CI is prepared in
+  `.github/workflows/integration.yml`. Verified against a real throwaway MongoDB
+  8.0 via `TEST_MONGO_URL` (2026-10-03); the Compose path and CI have not run yet. See [validation guide](docs/integration-validation.md).
+- `backend/tests/test_gateway_pipeline.py`: seven prepared cases against real
+  Mongo + backend + SDK + pinned gateway with only Arena HTTP mocked. Persistence,
+  artifacts/Git/export, fail-fast/resume, disconnected recovery, credential trust,
+  stop/resume, queue and deletion; no real provider. Passed 7/7 against a real
+  throwaway MongoDB 8.0 (2026-10-03).
+- `backend/tests/test_gateway.py`: actual pinned gateway + real OpenAI SDK with
+  ASGI and mocked Arena transport; synthetic session/model data only. Tests local
+  configuration, credential boundaries/redaction, auth, disconnected readiness,
+  model discovery, SSE/nonstream conversion, chat history and artifact extraction,
+  and a short-lived standalone listener without MongoDB. No real Arena request.
+- `frontend/tests/dev_proxy.py`: real Vite with a local fixture HTTP receiver;
+  checks preview Host acceptance, same-origin GET/POST and server-only API target.
+  It does not replace the MongoDB-backed job lifecycle regression.
 - `backend/tests/arena_stub.py` is a LOCAL stand-in for arena2api on
   127.0.0.1:9090 (supervisor program `arena-stub`). Magic models: `stub-503`,
   `stub-503-at-N`, `stub-slow`. Turn-dependent canned replies include a

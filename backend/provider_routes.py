@@ -57,6 +57,8 @@ async def test_provider(body: dict = Body(...)):
                 raise providers.ProviderError(409, f"Provider '{stored['name']}': {err}")
         else:
             key = None
+        # No key of its own: the server ARENA2API_API_KEY, only for exactly the configured gateway URL.
+        key = providers.effective_key(key, base)
     except providers.ProviderError as e:
         _raise(e)
     name = (body.get("name") or (stored or {}).get("name") or "provider").strip()[:providers.NAME_MAX] or "provider"
@@ -99,7 +101,8 @@ async def list_models(provider_id: str):
     if err:
         raise HTTPException(status_code=409, detail=f"Provider '{doc['name']}': {err}")
     try:
-        models = await providers.fetch_models(doc["base_url"], key, doc.get("headers"), name=doc["name"],
+        models = await providers.fetch_models(doc["base_url"], providers.effective_key(key, doc["base_url"]),
+                                              doc.get("headers"), name=doc["name"],
                                               arena=doc.get("preset") == "arena2api")
     except providers.ProviderError as e:
         _raise(e)

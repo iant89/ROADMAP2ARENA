@@ -452,6 +452,78 @@ def test_no_secret_key_and_changed_secret_key():
     first._log.close()
 
 
+
+def test_unit_server_gateway_key_rules():
+    """PR #11's server-only ARENA2API_API_KEY inside providers: exact-URL use, precedence, redaction."""
+    from unittest.mock import patch
+    import app_settings
+    gw_key = "gw-secret-key-0123456789"
+    with patch.object(app_settings.env, "ARENA2API_API_KEY", gw_key), \
+            patch.object(app_settings.env, "ARENA2API_URL", "http://localhost:9090/"):
+        assert providers.server_key_for("http://localhost:9090/v1") == gw_key
+        assert providers.server_key_for(" http://localhost:9090/v1/ ") == gw_key
+        for alias in ("http://127.0.0.1:9090/v1", "http://localhost:9091/v1", "http://localhost:9090/other/v1",
+                      "https://localhost:9090/v1", "http://localhost:9090", ""):
+            assert providers.server_key_for(alias) is None, alias
+        assert providers.effective_key("own-key-1234", "http://localhost:9090/v1") == "own-key-1234"
+        assert providers.effective_key(None, "http://localhost:9090/v1") == gw_key
+        assert providers.effective_key(None, "https://api.openai.com/v1") is None
+        doc = {"id": "x", "name": "gw", "base_url": "http://localhost:9090/v1", "api_key_enc": None}
+        pub = providers.public(doc, None)
+        assert pub["server_key"] is True and gw_key not in json.dumps(pub)
+        assert providers.public({**doc, "base_url": "http://127.0.0.1:9090/v1"}, None)["server_key"] is False
+        # the gateway key is redacted (PR #11 placeholder) from every provider message, before truncation
+        m = providers.status_message(500, "x" * 185 + gw_key, name="OpenAI")
+        assert gw_key not in m and gw_key[:8] not in m and "[redacted " in m, m
+        assert providers.redact(f"key {gw_key}", []) == "key [redacted gateway key]"
+        # 401 hints: legacy keeps PR #11's text; arena2api providers also point at Settings; others unchanged
+        m = providers.status_message(401, "Invalid API key", name=providers.LEGACY_NAME, arena=True)
+        assert m.startswith("arena2api returned 401: Invalid API key - check that ARENA2API_API_KEY") and "GATEWAY_API_KEY" in m, m
+        m = providers.status_message(401, "Invalid API key", name="arena2api (local)", arena=True)
+        assert "ARENA2API_API_KEY" in m and "Settings > Providers" in m, m
+        m = providers.status_message(401, "nope", name="OpenAI", arena=False)
+        assert "ARENA2API_API_KEY" not in m and "(API key rejected)" in m, m
+
+
+def test_server_gateway_key_end_to_end():
+    """A gateway with ARENA2API_API_KEY: migrated provider + exact legacy URL get it; aliases never do."""
+    gw = f"{STUB}/auth"  # the stub's auth mode only accepts GOOD_KEY
+    alias = gw.replace("127.0.0.1", "localhost")
+    srv = IsolatedServer(step_delay=0, extra_env=env(ARENA2API_URL=gw, ARENA2API_API_KEY=GOOD_KEY))
+    with srv as B:
+        c.post(f"{STUB}/_reset")
+        p = c.get(f"{B}/providers").json()
+        mig = p["providers"][0]
+        assert mig["base_url"] == gw + "/v1" and mig["api_key_set"] is False and mig["server_key"] is True, mig
+        assert c.get(f"{B}/providers/{mig['id']}/models").status_code == 200
+        t = c.post(f"{B}/providers/test", json={"base_url": gw + "/v1"}).json()
+        assert t["ok"], t
+        assert run_job(B, model="m")["status"] == "done"                     # default (migrated) provider
+        assert run_job(B, arena_url=gw, model="m")["status"] == "done"       # legacy, exact ARENA2API_URL
+        sent = [r for r in stub_requests()]
+        assert sent and all(r["headers"].get("authorization") == f"Bearer {GOOD_KEY}" for r in sent), sent
+        # aliases: legacy job and provider never receive the server key -> 401 with PR #11's hint
+        c.post(f"{STUB}/_reset")
+        e = run_job(B, arena_url=alias, model="m")
+        assert e["status"] == "error" and "arena2api returned 401" in e["error"] and "ARENA2API_API_KEY" in e["error"], e["error"]
+        ap = create_provider(B, name="alias", preset="arena2api", base_url=alias + "/v1")
+        assert ap["server_key"] is False
+        r = c.get(f"{B}/providers/{ap['id']}/models")
+        assert r.status_code == 502 and "401" in r.json()["detail"], r.text
+        e2 = run_job(B, provider_id=ap["id"], model="m")
+        assert e2["status"] == "error" and "Settings > Providers" in e2["error"], e2["error"]
+        assert all(r["headers"].get("authorization") != f"Bearer {GOOD_KEY}" for r in stub_requests())
+        # a provider's own key wins over the server key, even at the exact gateway URL
+        own = create_provider(B, name="own", preset="arena2api", base_url=gw + "/v1", api_key="sk-wrong-key-123456")
+        assert own["server_key"] is False and own["api_key_set"]
+        assert run_job(B, provider_id=own["id"], model="m")["status"] == "error"
+        # clearing it falls back to the server key
+        assert c.put(f"{B}/providers/{own['id']}", json={"clear_api_key": True}).json()["server_key"] is True
+        assert run_job(B, provider_id=own["id"], model="m")["status"] == "done"
+        text = everything_text(B, srv)
+        assert GOOD_KEY not in text and "sk-wrong-key-123456" not in text
+
+
 if __name__ == "__main__":
     stub = subprocess.Popen([PY, os.path.join(HERE, "provider_stub.py"), "--port", str(STUB_PORT)],
                             stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, env={**os.environ, "STUB_SLOW_SECONDS": "3"})

@@ -30,6 +30,8 @@ HTTP_TIMEOUT = 15.0
 DETAIL_MAX = 200
 REDACTED = "[redacted]"
 HINT_503 = "check that the arena2api Chrome tab is open and pushing tokens"
+HINT_401_GATEWAY = ("check that ARENA2API_API_KEY in backend/.env matches GATEWAY_API_KEY in gateway/.env - the key is "
+                    "only sent when the job URL is exactly ARENA2API_URL")
 LEGACY_NAME = "arena2api"
 
 PRESETS = [
@@ -157,7 +159,8 @@ def decrypt_key(doc: dict) -> tuple[str | None, str | None]:
 
 
 def redact(text: str, secrets: list[str | None]) -> str:
-    out = text or ""
+    """Scrub provider secrets AND the server-only ARENA2API_API_KEY (PR #11) from any message."""
+    out = app_settings.redact_gateway_key(text or "")
     for s in sorted({s for s in secrets if s and len(s) >= 4}, key=len, reverse=True):
         out = out.replace(s, REDACTED)
     return out
@@ -174,6 +177,7 @@ def public(doc: dict, default_id: str | None) -> dict:
         "id": doc["id"], "name": doc["name"], "preset": doc.get("preset", "custom"), "base_url": doc["base_url"],
         "headers": doc.get("headers") or {}, "default_model": doc.get("default_model"),
         "api_key_set": bool(doc.get("api_key_enc")), "api_key_error": key_error,
+        "server_key": not doc.get("api_key_enc") and server_key_for(doc["base_url"]) is not None,
         "is_default": doc["id"] == default_id, "migrated": bool(doc.get("migrated")),
         "created_at": doc.get("created_at"), "updated_at": doc.get("updated_at"),
     }
@@ -194,6 +198,24 @@ def origin(url: str) -> tuple[str, str, int | None]:
 def legacy_base(arena_url: str) -> str:
     base = arena_url.strip().rstrip("/")
     return base if base.endswith("/v1") else f"{base}/v1"
+
+
+def server_key_for(base_url: str) -> str | None:
+    """The server-only ARENA2API_API_KEY (backend/.env) for a provider WITHOUT its own key.
+
+    Same exact-URL rule as app_settings.gateway_api_key for legacy jobs: only when base_url is
+    exactly ARENA2API_URL's OpenAI base (ARENA2API_URL + /v1). Aliases (127.0.0.1 vs localhost),
+    other ports or paths never receive it. The key itself is never stored or returned.
+    """
+    key = app_settings.env.ARENA2API_API_KEY
+    if not key or not base_url:
+        return None
+    return key if base_url.strip().rstrip("/") == legacy_base(app_settings.env.ARENA2API_URL) else None
+
+
+def effective_key(stored_key: str | None, base_url: str) -> str | None:
+    """A provider's own key wins; otherwise the server gateway key for the exact gateway URL."""
+    return stored_key or server_key_for(base_url)
 
 
 # ------------------------------------------------------------------ storage
@@ -345,7 +367,10 @@ def status_message(code: int, detail: str, *, name: str, model: str | None = Non
     detail = redact(detail, list(secrets))[:DETAIL_MAX]
     msg = f"{name} returned {code}"
     tag, hint = "", ""
-    if code == 401:
+    if code == 401 and arena:
+        # PR #11 wording for the gateway; provider jobs may also carry their own key.
+        hint = HINT_401_GATEWAY if name == LEGACY_NAME else f"{HINT_401_GATEWAY}, or set this provider's API key in Settings > Providers"
+    elif code == 401:
         tag, hint = " (API key rejected)", "check the API key in Settings > Providers"
     elif code == 403:
         tag, hint = " (access denied)", "the key may lack access to this model, or the account needs credits"
@@ -441,7 +466,9 @@ async def resolve_for_run(db, job: dict) -> dict:
     """Connection parameters for a run: {name, base_url, key, headers, arena}. Raises ProviderUnavailable."""
     snap = job.get("provider")
     if not snap:
-        return {"name": LEGACY_NAME, "base_url": legacy_base(job["arena_url"]), "key": None, "headers": {}, "arena": True}
+        # Legacy job: PR #11's rule - the server key only for exactly ARENA2API_URL.
+        return {"name": LEGACY_NAME, "base_url": legacy_base(job["arena_url"]),
+                "key": app_settings.gateway_api_key(job["arena_url"]), "headers": {}, "arena": True}
     doc = await get_doc(db, snap["id"])
     if not doc:
         raise ProviderUnavailable(f"Provider '{snap['name']}' was deleted - resume or restart the job with another provider")
@@ -450,5 +477,6 @@ async def resolve_for_run(db, job: dict) -> dict:
         raise ProviderUnavailable(f"Provider '{doc['name']}': {err} in Settings > Providers")
     # The provider's CURRENT base URL is used (the stored key belongs to it); the orchestrator
     # refreshes the job's snapshot when it changed since the job was created.
-    return {"name": doc["name"], "base_url": doc["base_url"], "key": key, "headers": doc.get("headers") or {},
+    return {"name": doc["name"], "base_url": doc["base_url"], "key": effective_key(key, doc["base_url"]),
+            "headers": doc.get("headers") or {},
             "arena": doc.get("preset") == "arena2api", "snapshot": snapshot(doc)}

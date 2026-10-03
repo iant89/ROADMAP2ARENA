@@ -169,6 +169,9 @@ function ProviderEditor({ provider, presets, encryption, onDone, onCancel }) {
           </div>
         )}
         <p className="text-xs text-muted-foreground">Encrypted with R2A_SECRET_KEY and never shown again; it is only sent to this provider's host.</p>
+        {provider?.server_key && !(draft.keyMode === 'replace' && draft.apiKey.trim()) && (
+          <p className="text-xs text-muted-foreground" data-testid="provider-server-key-note">Without a key here, the backend uses ARENA2API_API_KEY from backend/.env (this base URL is exactly the configured gateway). A key saved here takes precedence.</p>
+        )}
         {keyBlocked && (
           <p role="alert" className="flex items-center gap-1.5 text-xs font-medium text-coral" data-testid="provider-key-blocked"><LockKeyhole className="size-3.5" /> R2A_SECRET_KEY is {encryption === 'invalid' ? 'invalid' : 'not set'} - a key cannot be saved until it is fixed.</p>
         )}
@@ -287,6 +290,7 @@ export default function ProvidersSettings() {
                   {p.is_default && <span className="inline-flex items-center gap-1 rounded-full bg-teal/10 px-2 py-0.5 text-[11px] font-semibold text-teal" data-testid="provider-default-badge"><Star className="size-3 fill-current" /> Default</span>}
                   <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{data.presets.find((x) => x.id === p.preset)?.label || p.preset}</span>
                   {p.api_key_set && !p.api_key_error && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><KeyRound className="size-3" /> key saved</span>}
+                  {p.server_key && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground" title="No key saved here: the backend sends ARENA2API_API_KEY from backend/.env because this base URL is exactly ARENA2API_URL + /v1" data-testid="provider-server-key"><KeyRound className="size-3" /> uses ARENA2API_API_KEY</span>}
                 </p>
                 <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{p.base_url}{p.default_model ? ` - ${p.default_model}` : ''}</p>
                 {p.api_key_error && <p className="mt-1 flex items-center gap-1.5 text-xs font-medium text-coral" data-testid="provider-key-error"><CircleAlert className="size-3.5" /> {p.api_key_error}</p>}
