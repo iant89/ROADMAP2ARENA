@@ -1,4 +1,4 @@
-"""Thin client for arena2api (OpenAI-compatible) with a rolling chat history."""
+"""Thin client for an OpenAI-compatible chat API (a provider or arena2api) with a rolling chat history."""
 from __future__ import annotations
 
 from openai import AsyncOpenAI
@@ -47,13 +47,17 @@ def build_prompt(project_context: str, steps: list[dict], index: int, previous_f
 class ArenaClient:
     """One instance per job; keeps the conversation so later steps see earlier turns."""
 
-    def __init__(self, arena_url: str, model: str, timeout_seconds: float):
+    def __init__(self, base_url: str, model: str, timeout_seconds: float, *, api_key: str | None = None,
+                 headers: dict | None = None):
+        """base_url is the full OpenAI base (".../v1"); see providers.legacy_base for old jobs."""
         self.model = model
         self.history: list[dict] = []
         # max_retries=0: the orchestrator fails fast and reports the first error.
+        # Without a key the SDK still needs a placeholder (local servers ignore it).
         self._client = AsyncOpenAI(
-            base_url=f"{arena_url.rstrip('/')}/v1",
-            api_key="sk-anything",
+            base_url=base_url.rstrip("/"),
+            api_key=api_key or "sk-no-key",
+            default_headers=headers or None,
             timeout=timeout_seconds,
             max_retries=0,
         )

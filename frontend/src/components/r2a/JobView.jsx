@@ -14,7 +14,7 @@ import JobControls from './JobControls'
 import JobAlerts from './JobAlerts'
 import RoadmapChecklist from './RoadmapChecklist'
 import WorkspaceTabs from './WorkspaceTabs'
-import { StatusChip, formatDateTime } from './status'
+import { StatusChip, formatDateTime, providerName } from './status'
 
 export function QueuedAlert({ job, onOpenQueue }) {
   const paused = job.status === 'paused'
@@ -101,7 +101,8 @@ export default function JobView({ jobId, onBack, backLabel, onOpenJob, onOpenQue
         <p className="min-w-0 flex-1 truncate">
           <span className="font-mono font-medium">{job.config.model}</span>
           <span className="mx-2 text-muted-foreground">via</span>
-          <span className="font-mono text-muted-foreground">{job.config.arena_url}</span>
+          <span className="font-medium" data-testid="job-provider-name">{providerName(job.config.provider)}</span>
+          <span className="ml-2 font-mono text-muted-foreground" title={job.config.arena_url}>{job.config.provider?.base_url || job.config.arena_url}</span>
         </p>
         <span className="shrink-0 text-xs text-muted-foreground">{formatDateTime(job.created_at)}</span>
       </div>

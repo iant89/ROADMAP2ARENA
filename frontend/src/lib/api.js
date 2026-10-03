@@ -34,8 +34,8 @@ async function errorFromResponse(res) {
 
 // fetch wrapper: JSON in/out, readable errors, retries idempotent GETs on
 // network errors and 5xx responses.
-async function request(path, { method = 'GET', body, raw = false } = {}) {
-  const attempts = method === 'GET' ? GET_RETRIES + 1 : 1
+async function request(path, { method = 'GET', body, raw = false, retry = true } = {}) {
+  const attempts = method === 'GET' && retry ? GET_RETRIES + 1 : 1
   let lastErr
   for (let i = 0; i < attempts; i += 1) {
     if (i > 0) await sleep(400 * 2 ** (i - 1))
@@ -93,14 +93,16 @@ function toJobView(dto) {
       }
     }
   }
-  const hint = dto.status === 'error' && /\b503\b/.test(dto.error || '') ? HINT_503 : null
+  // The Chrome-tab hint only applies to arena2api (legacy jobs or the arena2api preset).
+  const viaArena = !dto.provider || dto.provider.preset === 'arena2api'
+  const hint = viaArena && dto.status === 'error' && /\b503\b/.test(dto.error || '') ? HINT_503 : null
   return {
     id: dto.job_id,
     status: dto.status,
     title: dto.title,
     created_at: dto.created_at,
     finished_at: dto.finished_at,
-    config: { arena_url: dto.arena_url, model: dto.model },
+    config: { arena_url: dto.arena_url, model: dto.model, provider: dto.provider ?? null },
     project_context: dto.project_context,
     roadmap_md: dto.roadmap_md,
     step_total: dto.step_total,
@@ -138,8 +140,12 @@ export async function parseRoadmap(markdown) {
 
 // Enqueues a job. Resolves to { id, status: 'running'|'queued', queue_position }.
 // cloned_from: source job id when submitted from the "Clone job" form.
-export async function startJob({ arena_url, model, project_context, roadmap_md, cloned_from }) {
-  const body = { arena_url, model, project_context, roadmap_md }
+// provider_id selects a provider; without it, arena_url makes a legacy (provider-less) job and
+// neither uses the default provider (contracts.md "Providers").
+export async function startJob({ provider_id, arena_url, model, project_context, roadmap_md, cloned_from }) {
+  const body = { model, project_context, roadmap_md }
+  if (provider_id) body.provider_id = provider_id
+  else if (arena_url?.trim()) body.arena_url = arena_url.trim()
   if (cloned_from) body.cloned_from = cloned_from
   const res = await request('/jobs', { method: 'POST', body })
   return { id: res.job_id, status: res.status, queue_position: res.queue_position }
@@ -165,6 +171,7 @@ export async function listJobs({ status, limit } = {}) {
     cloned_from: j.cloned_from ?? null,
     title: j.title || 'Untitled roadmap',
     model: j.model,
+    provider: j.provider ?? null,
     steps_done: j.steps_done,
     step_total: j.step_total,
     failed_step: j.failed_step,
@@ -176,7 +183,8 @@ export async function listJobs({ status, limit } = {}) {
 // ---------------------------------------------------------------- job controls
 function overridesBody(overrides) {
   const body = {}
-  if (overrides?.arena_url?.trim()) body.arena_url = overrides.arena_url.trim()
+  if (overrides?.provider_id) body.provider_id = overrides.provider_id
+  else if (overrides?.arena_url?.trim()) body.arena_url = overrides.arena_url.trim()
   if (overrides?.model?.trim()) body.model = overrides.model.trim()
   return Object.keys(body).length ? body : undefined
 }
@@ -443,4 +451,44 @@ export async function getGitHubWatches() {
 
 export async function pollGitHubNow() {
   return request('/github/poll', { method: 'POST' })
+}
+
+// ---------------------------------------------------------------- providers
+// { providers: [{ id, name, preset, base_url, headers, default_model, api_key_set, api_key_error,
+//   is_default, migrated }], default_provider_id, presets: [{ id, label, base_url, needs_key, hint }],
+//   encryption: 'ok'|'missing'|'invalid' }. API keys are write-only and never returned.
+export async function getProviders() {
+  return request('/providers')
+}
+
+// body: { name, preset, base_url, api_key?, headers?, default_model?, make_default? }
+export async function createProvider(body) {
+  return request('/providers', { method: 'POST', body })
+}
+
+// patch: any of name, preset, base_url, headers, default_model; api_key (replace) or clear_api_key: true
+export async function updateProvider(id, patch) {
+  return request(`/providers/${encodeURIComponent(id)}`, { method: 'PUT', body: patch })
+}
+
+export async function deleteProvider(id) {
+  const res = await request(`/providers/${encodeURIComponent(id)}`, { method: 'DELETE', raw: true })
+  return res.ok
+}
+
+export async function setDefaultProvider(id) {
+  return request(`/providers/${encodeURIComponent(id)}/default`, { method: 'POST' })
+}
+
+// Resolves to [model ids]; throws ApiError (502 with a readable message) when the provider fails.
+// Not retried: a failing provider should fall back to typing the model quickly.
+export async function fetchProviderModels(id) {
+  const res = await request(`/providers/${encodeURIComponent(id)}/models`, { retry: false })
+  return res.models
+}
+
+// Draft test: { base_url, api_key?, headers?, provider_id?, name?, preset? } ->
+// { ok, status, model_count, models, latency_ms, message }
+export async function testProvider(draft) {
+  return request('/providers/test', { method: 'POST', body: draft })
 }

@@ -17,9 +17,10 @@ import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useQueue } from '@/hooks/useQueue'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useUrlState } from '@/hooks/useUrlState'
+import { useProviders } from '@/hooks/useProviders'
 import { cn } from '@/lib/utils'
 
-const EMPTY_FORM = { arena_url: '', model: '', project_context: '', roadmap_md: '' }
+const EMPTY_FORM = { provider_id: '', arena_url: '', model: '', project_context: '', roadmap_md: '' }
 
 function Count({ n, testId }) {
   if (!n) return null
@@ -38,6 +39,14 @@ export default function App() {
   const [finishedKey, setFinishedKey] = useState(0)
   const prevRunning = useRef(undefined)
   const runningId = queue?.running?.job_id ?? null
+  const { data: providerData } = useProviders()
+  const defaultProvider = providerData?.providers.find((p) => p.id === providerData.default_provider_id) ?? null
+
+  // Preselect the default provider (and its default model) until the user picks one.
+  useEffect(() => {
+    if (!defaultProvider) return
+    setForm((f) => (f.provider_id || f.arena_url ? f : { ...f, provider_id: defaultProvider.id, model: defaultProvider.default_model || f.model }))
+  }, [defaultProvider])
 
   // Form defaults come from the backend settings; only fill fields the user has not typed in.
   useEffect(() => {
@@ -47,7 +56,7 @@ export default function App() {
         if (!alive) return
         setSettings(s)
         setSettingsError(null)
-        setForm((f) => ({ ...f, arena_url: f.arena_url || s.arena_url, model: f.model || s.model }))
+        setForm((f) => ({ ...f, model: f.model || s.model }))
       })
       .catch((err) => alive && setSettingsError(err.message))
     return () => { alive = false }
@@ -70,7 +79,6 @@ export default function App() {
   const handleSettingsSaved = (next) => {
     setForm((f) => ({
       ...f,
-      arena_url: !f.arena_url || f.arena_url === settings?.arena_url ? next.arena_url : f.arena_url,
       model: !f.model || f.model === settings?.model ? next.model : f.model,
     }))
     setSettings(next)

@@ -21,11 +21,12 @@ from typing import Awaitable, Callable
 import openai
 
 import app_settings
+import providers
 from arena_client import ArenaClient, build_prompt
 from artifact_extractor import count_unnamed_blocks, extract_artifacts
 
 LOG_LIMIT = 500
-HINT_503 = "check that the arena2api Chrome tab is open and pushing tokens"
+HINT_503 = providers.HINT_503
 
 logger = logging.getLogger("roadmap2arena.orchestrator")
 # Registry of running job tasks by job_id (single uvicorn process).
@@ -89,27 +90,15 @@ async def append_log(db, job_id: str, level: str, msg: str) -> None:
     )
 
 
-def describe_error(exc: Exception, arena_url: str, timeout_seconds: float) -> str:
-    if isinstance(exc, openai.APIStatusError):
-        code = exc.status_code
-        msg = f"arena2api returned {code}"
-        detail = ""
-        try:
-            body = exc.response.json()
-            err = body.get("error") if isinstance(body, dict) else None
-            detail = err.get("message", "") if isinstance(err, dict) else (err or body.get("detail") or "")
-        except Exception:  # noqa: BLE001 - body may not be JSON
-            detail = (exc.response.text or "")[:200]
-        if detail:
-            msg += f": {detail}"
-        if code == 503:
-            msg += f" - {HINT_503}"
-        return msg
-    if isinstance(exc, openai.APITimeoutError):
-        return f"arena2api request timed out after {timeout_seconds:g}s"
-    if isinstance(exc, openai.APIConnectionError):
-        return f"could not reach arena2api at {arena_url} - is it running?"
-    return f"{type(exc).__name__}: {exc}"
+def describe_error(exc: Exception, arena_url: str, timeout_seconds: float, *, conn: dict | None = None,
+                   model: str | None = None) -> str:
+    """Readable, redacted step error (mapping: contracts.md "Providers" > Error mapping).
+
+    conn is providers.resolve_for_run()'s result; without it the legacy arena2api wording is used.
+    """
+    conn = conn or {"name": providers.LEGACY_NAME, "base_url": arena_url, "key": None, "headers": {}, "arena": True}
+    return providers.describe(exc, name=conn["name"], base_url=conn["base_url"], model=model, timeout=timeout_seconds,
+                              arena=conn["arena"], secrets=providers.secrets_of(conn["key"], conn["headers"]))
 
 
 def is_running(job_id: str | None = None) -> bool:
@@ -218,7 +207,20 @@ async def run_job(db, job_id: str) -> None:
     # Current runtime settings (Mongo) apply to every new run, including resumes.
     cfg = await app_settings.get(db)
     delay, timeout = float(cfg["step_delay_seconds"]), float(cfg["request_timeout_seconds"])
-    client = ArenaClient(job["arena_url"], job["model"], timeout)
+    snap = job.get("provider")
+    try:
+        conn = await providers.resolve_for_run(db, job)
+        unavailable = None
+    except providers.ProviderUnavailable as exc:  # reported as a step-1 failure below
+        conn = {"name": snap["name"], "base_url": snap["base_url"], "key": None, "headers": {}, "arena": False}
+        unavailable = exc
+    client = ArenaClient(conn["base_url"], job["model"], timeout, api_key=conn["key"], headers=conn["headers"])
+    if snap and conn.get("snapshot") and conn["snapshot"] != snap:
+        # Provider renamed/moved since the job was created: run against its current config.
+        await db.jobs.update_one({"id": job_id}, {"$set": {"provider": conn["snapshot"], "arena_url": conn["base_url"]}})
+        await append_log(db, job_id, "info", f"Provider changed since the job was created: {snap['name']} ({snap['base_url']}) -> "
+                                             f"{conn['name']} ({conn['base_url']})")
+    target = f"provider {conn['name']} ({conn['base_url']})" if snap else f"arena2api {job['arena_url']}"
     files: dict[str, int] = {}
 
     # Resume support: replay finished steps into the chat history and file list.
@@ -231,10 +233,10 @@ async def run_job(db, job_id: str) -> None:
     if done_steps:
         await append_log(db, job_id, "info", f"Rebuilt history from {len(done_steps)} done step(s) "
                                              f"({len(client.history)} messages, {len(files)} files); "
-                                             f"model {job['model']}, arena2api {job['arena_url']}, "
+                                             f"model {job['model']}, {target}, "
                                              f"step delay {delay:g}s, timeout {timeout:g}s")
     else:
-        await append_log(db, job_id, "info", f"Job started: {len(steps)} steps, model {job['model']}, arena2api {job['arena_url']}, "
+        await append_log(db, job_id, "info", f"Job started: {len(steps)} steps, model {job['model']}, {target}, "
                                              f"step delay {delay:g}s, timeout {timeout:g}s")
     try:
         await _run_hooks(on_run_start, db, job_id)
@@ -245,13 +247,15 @@ async def run_job(db, job_id: str) -> None:
                 {"job_id": job_id, "index": idx},
                 {"$set": {"status": "running", "prompt": prompt, "started_at": now_iso()}},
             )
-            await append_log(db, job_id, "info", f'Step {idx}/{len(steps)} "{step["title"]}" sent to arena2api')
+            await append_log(db, job_id, "info", f'Step {idx}/{len(steps)} "{step["title"]}" sent to {conn["name"]}')
             try:
+                if unavailable:
+                    raise unavailable
                 response = await client.complete(prompt)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - every failure ends the job
-                message = describe_error(exc, job["arena_url"], timeout)
+                message = describe_error(exc, job["arena_url"], timeout, conn=conn, model=job["model"])
                 ts = now_iso()
                 await db.steps.update_one(
                     {"job_id": job_id, "index": idx},

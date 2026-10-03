@@ -53,7 +53,7 @@ def test_setup_done_job():
 def test_transcript_json():
     t = c.get(f"{BASE}/jobs/{S['job']}/transcript").json()
     assert set(t) == {"job_id", "title", "status", "model", "arena_url", "project_context", "created_at", "finished_at",
-                      "step_total", "steps_done", "turns"}
+                      "step_total", "steps_done", "turns", "provider"}
     assert [x["step_index"] for x in t["turns"]] == [1, 2, 3]
     for x in t["turns"]:
         assert set(x) == {"step_index", "step_title", "status", "prompt", "response", "error", "artifact_paths",
@@ -113,7 +113,8 @@ def test_files_list_and_download():
 
 def test_clone_source_and_clone():
     src = c.get(f"{BASE}/jobs/{S['job']}/clone-source").json()
-    assert set(src) == {"source_job_id", "title", "arena_url", "model", "project_context", "roadmap_md", "step_total"}
+    assert set(src) == {"source_job_id", "title", "arena_url", "model", "project_context", "roadmap_md", "step_total",
+                        "provider"}
     assert src["source_job_id"] == S["job"] and src["project_context"] == XSS and src["step_total"] == 3
     assert c.get(f"{BASE}/jobs/nope/clone-source").status_code == 404
     r = create({**{k: src[k] for k in ("arena_url", "project_context")}, "model": "gpt-4o",

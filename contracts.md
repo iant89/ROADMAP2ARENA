@@ -14,13 +14,13 @@ FastAPI's `{"detail": "..."}` shape.
 | PUT | `/api/settings` body: any subset of the 4 fields | same shape as GET (saved) | 422 unknown key, arena_url not http(s), empty model, delay not 0-600, timeout not 10-3600, non-number/bool, bad JSON |
 | POST | `/api/settings/reset` | same shape as GET, values = backend/.env | - |
 | POST | `/api/roadmap/parse` body `{roadmap_md}` | `{steps:[{index,title,description}], title}` | 422 no steps / bad body |
-| POST | `/api/jobs` body `{arena_url?, model?, project_context?, roadmap_md, cloned_from?}` (defaults from settings; `cloned_from` = source job id from "Clone job", 422 if unknown) | 201 `{job_id, status:"running"\|"queued", queue_position}` (never 409 - busy means queued) | 422 arena_url not http(s), empty model, empty roadmap or no steps |
+| POST | `/api/jobs` body `{provider_id?, arena_url?, model?, project_context?, roadmap_md, cloned_from?}` (provider resolution in "Providers"; model defaults to the provider's default_model, then settings; `cloned_from` = source job id from "Clone job", 422 if unknown) | 201 `{job_id, status:"running"\|"queued", queue_position}` (never 409 - busy means queued) | 422 unknown provider_id, arena_url not http(s), empty model, empty roadmap or no steps |
 | GET | `/api/jobs?status=a,b&limit=n` | most recent first, default 20, `limit` 1-200: `[{job_id,status,created_at,step_total,steps_done,title,model,failed_step,stopped_step,restarted_from,queue_position,queued_at,started_at,finished_at,paused}]` | 422 unknown status / limit out of range |
-| GET | `/api/jobs/{id}` | `{job_id,status,error,failed_step,stopped_step,restarted_from,queue_position,queued_at,started_at,title,created_at,finished_at,arena_url,model,project_context,roadmap_md,step_total,steps_done,steps:[{index,title,description,status,error,artifact_paths}],log:[{ts,level,msg}]}` | 404 |
+| GET | `/api/jobs/{id}` | `{job_id,status,error,failed_step,stopped_step,restarted_from,queue_position,queued_at,started_at,title,created_at,finished_at,arena_url,model,provider,project_context,roadmap_md,step_total,steps_done,steps:[{index,title,description,status,error,artifact_paths}],log:[{ts,level,msg}]}` | 404 |
 | GET | `/api/jobs/{id}/steps/{index}` | full step: `{job_id,index,title,description,status,prompt,response,error,artifacts:[{path,content}],started_at,finished_at}` | 404 job or step |
 | POST | `/api/jobs/{id}/stop` | `{job_id,status:"stopped",stopped_step,steps_done}` | 404; 409 job not running (queued/paused: cancel it via the queue instead) or finished before the stop took effect |
-| POST | `/api/jobs/{id}/restart` body `{arena_url?, model?}` (optional) | 201 `{job_id, status, queue_position}` of a NEW job (enqueued) | 404; 409 job not finished, or a restart of this job is already queued/paused/running; 422 bad override |
-| POST | `/api/jobs/{id}/resume` body `{arena_url?, model?}` (optional) | `{job_id, status:"running"\|"queued", queue_position, resumed_from_step}` (same job, enqueued) | 404; 409 job done/running/queued/paused or nothing left; 422 bad override |
+| POST | `/api/jobs/{id}/restart` body `{provider_id?, arena_url?, model?}` (optional) | 201 `{job_id, status, queue_position}` of a NEW job (enqueued) | 404; 409 job not finished, or a restart of this job is already queued/paused/running; 422 bad override |
+| POST | `/api/jobs/{id}/resume` body `{provider_id?, arena_url?, model?}` (optional) | `{job_id, status:"running"\|"queued", queue_position, resumed_from_step}` (same job, enqueued) | 404; 409 job done/running/queued/paused or nothing left; 422 bad override |
 | GET | `/api/queue` | `{running: summary\|null, queued:[summary in queue order], count, waiting}`; summary = `{job_id,status,title,model,step_total,steps_done,queue_position,queued_at,created_at,started_at,restarted_from,paused}` | - |
 | POST | `/api/queue/{id}/move` body `{direction:"up"\|"down"}` or `{position:n}` | `{job_id,status,queue_position}` | 404; 409 not queued/paused; 422 neither/both fields, bad direction, position < 1 (large positions clamp to the end) |
 | POST | `/api/queue/{id}/pause` | `{job_id,status:"paused",queue_position}` - moved to the END of the queue (idempotent) | 404; 409 not queued/paused |
@@ -30,11 +30,11 @@ FastAPI's `{"detail": "..."}` shape.
 | DELETE | `/api/jobs/{id}` | HARD DELETE: job document, all its steps (prompts, responses, artifacts) and registered per-job data. `{deleted:true, job_id, previous_status, steps_deleted, was_queued}`; a queued/paused job is taken out of the queue (positions renumbered) | 404; 409 running ("stop it first, then delete it") |
 | POST | `/api/jobs/bulk-delete` body `{job_ids:[...]}` (1-500, duplicates/blank ignored) | 200 `{deleted:[ids in request order], deleted_count, skipped:[{job_id, reason:"running"\|"not_found"}]}` | 422 missing/empty/over 500 ids |
 | POST | `/api/jobs/delete-finished` | deletes every `done\|error\|stopped\|cancelled` job; same shape as bulk-delete | - |
-| GET | `/api/jobs/{id}/transcript` | `{job_id,title,status,model,arena_url,project_context,created_at,finished_at,step_total,steps_done,turns:[{step_index,step_title,status,prompt,response,error,artifact_paths,started_at,finished_at}]}` - one user (prompt) / assistant (response) turn per sent step, pending steps omitted | 404 |
+| GET | `/api/jobs/{id}/transcript` | `{job_id,title,status,model,arena_url,provider,project_context,created_at,finished_at,step_total,steps_done,turns:[{step_index,step_title,status,prompt,response,error,artifact_paths,started_at,finished_at}]}` - one user (prompt) / assistant (response) turn per sent step, pending steps omitted | 404 |
 | GET | `/api/jobs/{id}/transcript.html` | `text/html; charset=utf-8` attachment `roadmap2arena-<id8>-transcript.html`: standalone (inline CSS, no scripts/external assets), all text HTML-escaped, fenced blocks as `<pre>` | 404 |
 | GET | `/api/jobs/{id}/files` | `[{path,step_index,versions:[step...],size,zip_path,zip_skip_reason}]` latest version per path (done steps), sorted by path | 404 |
 | GET | `/api/jobs/{id}/files/download?path=<p>&step=<n>` | `text/plain; charset=utf-8` attachment (file name = basename); latest version, or the version from step n | 404 job/file/version; 422 missing path, step outside 1..100000 |
-| GET | `/api/jobs/{id}/clone-source` | `{source_job_id,title,arena_url,model,project_context,roadmap_md,step_total}` for the prefilled Clone form | 404 |
+| GET | `/api/jobs/{id}/clone-source` | `{source_job_id,title,arena_url,model,provider,project_context,roadmap_md,step_total}` for the prefilled Clone form | 404 |
 | GET | `/api/jobs/{id}/download` | `application/zip`, latest version per path | 404 unknown job; 409 no artifacts |
 | GET | `/api/jobs/{id}/git?limit=1..500` | `{job_id, project_id, job_status, exists, can_init, repo_id, owner:{type,id}, path, default_branch, head, commit_count, uncommitted_steps, commits:[{sha, short_sha, message, step_index, author_name, author_email, date, files_changed, insertions, deletions}], remotes}` newest first; `exists:false` (no repo yet) has `commits:[]` | 404 job, 422 limit |
 | POST | `/api/jobs/{id}/git/init` | create the repo now and commit every done step without a commit (older jobs); same shape + `committed_steps:[N]`; idempotent | 404, 500 git error |
@@ -93,10 +93,116 @@ UI labels: done = "Completed", error = "Failed", queued = "Queued" (not started 
 - MongoDB collection `settings`, one document `_id:"app"` with `arena_url, model,
   step_delay_seconds, request_timeout_seconds, updated_at`. Seeded from backend/.env on
   first startup (`$setOnInsert`, values clamped into range); reset restores the .env values.
-- `POST /api/jobs` defaults arena_url/model from settings. Each run (new, resumed,
+- `POST /api/jobs` defaults model from settings (provider/URL resolution: see Providers). Each run (new, resumed,
   restarted) reads step delay and request timeout from settings when it starts and logs
   them ("..., step delay 2s, timeout 300s"); a running job keeps its values.
-- No new environment variables.
+- No new environment variables. `default_provider_id` / `providers_migrated` live in the same doc
+  but are managed by the providers API, not `PUT /api/settings`.
+
+### Providers (backend/providers.py, provider_routes.py)
+
+Jobs can use any OpenAI-compatible chat API. A **provider** is a named base URL plus an
+optional API key and optional extra headers; arena2api is one preset among others.
+
+- MongoDB collection `providers`, one doc per provider:
+  `id` (UUID4), `name` (1-60 chars, unique case-insensitively), `preset`
+  (`openai|openrouter|groq|ollama|lmstudio|arena2api|custom`), `base_url` (http/https, the
+  full OpenAI base **including** `/v1` or the provider's equivalent, e.g.
+  `https://openrouter.ai/api/v1`; trailing `/` stripped), `api_key_enc` (Fernet token or
+  null), `headers` (object name -> value, max 10), `default_model` (string or null),
+  `migrated` (bool), `created_at`, `updated_at`. The default provider id is stored in the
+  settings doc as `default_provider_id` (not part of `GET /api/settings`).
+- **API key**: write-only. Encrypted with `R2A_SECRET_KEY` (same Fernet key and helper as the
+  GitHub token). It is never returned, logged, stored on jobs, put in a URL, or echoed in an
+  error: any provider error text is passed through a redactor that replaces the key (and
+  any extra-header value) with `[redacted]` before it is stored or returned. Saving a key
+  without a valid `R2A_SECRET_KEY` -> 409 with the key-generation hint. Providers without a
+  key work without `R2A_SECRET_KEY`. If the stored key cannot be decrypted (key changed), the
+  provider shows `api_key_error` and jobs using it fail with "re-enter the API key".
+- **Extra headers**: plain, returned to the UI (e.g. OpenRouter `HTTP-Referer`, `X-Title`).
+  Names must be RFC 7230 tokens; values printable ASCII, max 500 chars. Credential-like or
+  managed names are refused with 422 ("use the API key field"): `authorization`,
+  `proxy-authorization`, `cookie`, `x-api-key`, `api-key`, `host`, `content-length`,
+  `content-type`, `connection`, `transfer-encoding`.
+- Public shape (`GET`, create/update responses):
+  `{id, name, preset, base_url, headers, default_model, api_key_set, api_key_error,
+  is_default, migrated, created_at, updated_at}` (`api_key_error`: null or a message).
+- Presets (`GET /api/providers` -> `presets`), each `{id, label, base_url, needs_key, hint}`:
+  OpenAI `https://api.openai.com/v1` (key), OpenRouter `https://openrouter.ai/api/v1` (key),
+  Groq `https://api.groq.com/openai/v1` (key), Ollama `http://localhost:11434/v1`,
+  LM Studio `http://localhost:1234/v1`, arena2api (local) `http://localhost:9090/v1`,
+  Custom (empty).
+
+Endpoints:
+
+- `GET /api/providers` -> `{providers: [...], default_provider_id, presets: [...],
+  encryption: "ok"|"missing"|"invalid"}` (providers sorted by name).
+- `POST /api/providers` body `{name, preset?, base_url, api_key?, headers?, default_model?,
+  make_default?}` -> 201 provider. The first provider ever created becomes the default.
+- `PUT /api/providers/{id}` body: any of `name, preset, base_url, headers, default_model`;
+  `api_key` (non-empty string replaces it; omitted = unchanged); `clear_api_key: true`
+  removes it. -> provider. 404 unknown id, 422 validation (unknown fields too).
+- `DELETE /api/providers/{id}` -> 204. 409 while a queued/paused/running job uses it. If it
+  was the default, the default becomes null. Finished jobs keep their snapshot.
+- `POST /api/providers/{id}/default` -> provider (now default).
+- `GET /api/providers/{id}/models` -> `{models: [id...], count}` from `GET {base_url}/models`
+  (OpenAI `{"data":[{"id":...}]}` or a bare list; sorted, de-duplicated, max 1000). Errors
+  -> 502 `{"detail": "<mapped message>"}` (see error mapping) so the UI can fall back to a
+  typed model name.
+- `POST /api/providers/test` body `{base_url, api_key?, headers?, provider_id?}` -> always 200
+  `{ok, status, model_count, models (first 200), latency_ms, message}`. Tests an unsaved
+  draft; with `provider_id` and no `api_key` the stored key is used. Same request as
+  "Fetch models"; the key is never echoed.
+- Timeouts: 15 s for test/models.
+
+Migration (startup, idempotent): when the `providers` collection is empty and the settings
+doc has no `providers_migrated` flag, a provider `arena2api (local)` (preset `arena2api`,
+`base_url` = settings `arena_url` + `/v1`, no key, `migrated: true`) is created and made the
+default; the flag is then set, so deleting every provider does not recreate it. Existing jobs
+are not rewritten: a job without `provider` is a **legacy job** and keeps using
+`arena_url` + `/v1` with no key (also for resume/restart).
+
+Jobs:
+
+- `POST /api/jobs` accepts `provider_id` (optional). Resolution: `provider_id` -> that
+  provider (422 if unknown); else an explicit `arena_url` -> legacy job (no provider, no key,
+  as before); else the default provider; else (no default) legacy with settings `arena_url`.
+  `model` defaults to the provider's `default_model`, else settings `model`.
+- Job doc gains `provider` = non-secret snapshot `{id, name, preset, base_url}` or null.
+  For provider jobs `arena_url` = the snapshot `base_url` (kept for compatibility/display).
+  The key is never copied to the job.
+- Runs use the provider's **current** base URL, key and headers (looked up by id). If the
+  name/base URL/preset changed since the job was created, the job's snapshot and `arena_url`
+  are refreshed and logged ("Provider changed since the job was created: A -> B"). If the
+  provider was deleted, the run fails at step 1 with "Provider '<name>' was deleted - resume
+  or restart the job with another provider"; an undecryptable key fails the same way.
+- Key/host binding: a stored key is only sent to the host it was saved for. `PUT` that moves
+  `base_url` to another origin (scheme/host/port) while a key is stored -> 422 unless the
+  request also sets `api_key` or `clear_api_key`. `POST /providers/test` with `provider_id`
+  reuses the stored key only for the stored origin (else 422 "Enter the API key...").
+- `POST /jobs/{id}/resume` and `/restart` accept `provider_id` too (switches provider and
+  refreshes the snapshot). An `arena_url` override without `provider_id` turns the job into a
+  legacy job (provider null) - unchanged behaviour for existing clients.
+- `provider` is included in `GET /api/jobs` items, `GET /api/jobs/{id}`, queue summaries
+  (`GET /api/queue` running/queued), `GET /jobs/{id}/transcript` and `clone-source`
+  (clone-and-edit preselects it when it still exists). Logs say "provider <name> (<base_url>)".
+
+Error mapping (`provider_errors.describe`, used by job runs, models and test). Every message
+starts with `<name> returned <code>` (name = provider name, `arena2api` for legacy jobs),
+then the provider's own short error text (max 200 chars, redacted), then a hint:
+
+| Upstream | Hint |
+| --- | --- |
+| 401 | `(API key rejected) - check the API key in Settings > Providers` |
+| 403 | `(access denied) - the key may lack access to this model, or the account needs credits` |
+| 404 | job: `- model '<model>' not found or wrong base URL; check the model name or fetch the model list`; models/test: `- endpoint not found; check the base URL (it usually ends in /v1)` |
+| 429 | `(rate limit or quota exceeded) - wait, then resume the job` |
+| 5xx | `(server error)`; for preset arena2api and legacy jobs a 503 keeps the hint "check that the arena2api Chrome tab is open and pushing tokens" |
+| timeout | `<name> request timed out after Ns` |
+| connect | `could not reach <name> at <base_url> - is it running?` |
+
+Legacy base URL rule: `arena_url` + `/v1`, unless `arena_url` already ends in `/v1` (so a
+provider job's `arena_url` can be reused as an override).
 
 ### Job controls
 
@@ -286,8 +392,9 @@ blocks are never stored as artifacts.
   Mongo (motor), fail-fast, `ARENA_STEP_DELAY_SECONDS` pause between steps,
   503 errors carry the hint "check that the arena2api Chrome tab is open and
   pushing tokens".
-- `arena_client.py`: AsyncOpenAI(base_url=`{arena_url}/v1`, api_key
-  `sk-anything`, timeout from env, max_retries 0), temperature 0.2, no streaming,
+- `arena_client.py`: AsyncOpenAI(base_url = the resolved provider base URL (legacy
+  jobs: `{arena_url}/v1`), api_key = the provider's decrypted key or `sk-no-key`, extra
+  provider headers, timeout from settings, max_retries 0), temperature 0.2, no streaming,
   rolling chat history per job; prompt formats match the former mock builder.
 - `artifact_extractor.py`: `BLOCK_RE` for fenced blocks, `lang:path` info string
   or `PATH_COMMENT_RE` first-line comment; `clean_zip_path` for the ZIP.
@@ -320,6 +427,20 @@ blocks are never stored as artifacts.
   `GET /steps/{index}` (finished steps cached).
 - ZIP via `GET /download`; filename from Content-Disposition.
 - `/?tab=history&job=<id>` deep-links to a job.
+- Providers (`hooks/useProviders.js`: one shared store for `GET /api/providers`, plus a
+  per-session model cache): Settings > Providers lists providers (default badge, preset,
+  base URL, "key saved", key errors) with Add / Edit / Make default / Delete (two-click
+  confirm). The editor has a preset select (prefills name + base URL, shows the hint), a
+  write-only API key (password field; an existing key shows "Key saved (hidden)" with
+  Replace / Remove), extra headers rows, a default model (datalist after Fetch models),
+  Test connection (`POST /providers/test`) and the R2A_SECRET_KEY warning. The runtime
+  settings form no longer edits the arena2api URL (it is kept as the legacy fallback).
+- Create job / Clone / Resume-Restart overrides use `ProviderModelFields`: provider select
+  (default preselected) + model input with a datalist from `GET /providers/{id}/models`
+  (fetched when the provider is picked, "Fetch models" refreshes; on failure the model is
+  typed, free text always allowed). Clone keeps the source provider (deleted -> default with
+  a note); legacy jobs offer "Legacy arena2api URL". Queue, history list/detail and Current
+  job show "model via <provider name>" (legacy jobs: "arena2api").
 
 ## Testing
 

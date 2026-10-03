@@ -1,33 +1,35 @@
 import { useEffect, useState } from 'react'
 import { Play, RotateCcw, Settings2, Square, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { cn } from '@/lib/utils'
+import { useProviders } from '@/hooks/useProviders'
+import { modelError as modelErrorOf, providerError } from '@/lib/providerForm'
+import ProviderModelFields from './ProviderModelFields'
 
 const CONFIRM_MS = 4000
 
-function isHttpUrl(value) {
-  try {
-    const u = new URL(value.trim())
-    return (u.protocol === 'http:' || u.protocol === 'https:') && Boolean(u.host)
-  } catch {
-    return false
-  }
-}
+const initialOverrides = (job) => ({
+  provider_id: job.config.provider?.id || '',
+  arena_url: job.config.provider ? '' : job.config.arena_url,
+  model: job.config.model,
+})
 
 // Stop (two-click confirm) while running; Resume (error/stopped/cancelled) and
-// Restart (any finished job) with optional model/URL overrides. Both go through
+// Restart (any finished job) with optional provider/model overrides (a legacy job may keep or
+// change its own arena2api URL). Both go through
 // the queue: they start at once when nothing is running, otherwise they wait.
 export default function JobControls({ job, busy, onStop, onResume, onRestart }) {
   const [confirmStop, setConfirmStop] = useState(false)
   const [showOverrides, setShowOverrides] = useState(false)
-  const [overrides, setOverrides] = useState({ arena_url: job.config.arena_url, model: job.config.model })
+  const [overrides, setOverrides] = useState(() => initialOverrides(job))
+  const { data: providerData } = useProviders()
+  const providers = providerData?.providers ?? null
+  const providerId = job.config.provider?.id
 
   useEffect(() => {
-    setOverrides({ arena_url: job.config.arena_url, model: job.config.model })
-  }, [job.id, job.config.arena_url, job.config.model])
+    setOverrides(initialOverrides(job))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job.id, job.config.arena_url, job.config.model, providerId])
 
   useEffect(() => {
     if (!confirmStop) return undefined
@@ -38,9 +40,9 @@ export default function JobControls({ job, busy, onStop, onResume, onRestart }) 
   const running = job.status === 'running'
   const canResume = ['error', 'stopped', 'cancelled'].includes(job.status)
   const canRestart = ['done', 'error', 'stopped', 'cancelled'].includes(job.status)
-  const modelError = overrides.model.trim() ? null : 'Model is required'
-  const urlError = isHttpUrl(overrides.arena_url) ? null : 'Use an http:// or https:// URL'
-  const invalid = showOverrides && Boolean(modelError || urlError)
+  const modelError = modelErrorOf(overrides)
+  const provError = providerError(overrides, providers)
+  const invalid = showOverrides && (!providers || Boolean(modelError || provError))
   const payload = showOverrides ? overrides : undefined
   const resumeFrom = job.steps.find((s) => s.status !== 'done')?.index
 
@@ -83,24 +85,22 @@ export default function JobControls({ job, busy, onStop, onResume, onRestart }) 
         )}
         <CollapsibleTrigger asChild>
           <Button size="sm" variant="ghost" data-testid="toggle-overrides-button">
-            <Settings2 /> {showOverrides ? 'Keep model and URL' : 'Change model or URL'}
+            <Settings2 /> {showOverrides ? 'Keep provider and model' : 'Change provider or model'}
           </Button>
         </CollapsibleTrigger>
       </div>
       <p className="text-xs text-muted-foreground">If another job is running, this is added to the job queue.</p>
       <CollapsibleContent className="r2a-rise">
-        <div className="grid gap-3 rounded-lg border border-border bg-paper p-3.5 sm:grid-cols-[1.4fr_1fr]" data-testid="overrides-panel">
-          <div className="space-y-1.5">
-            <Label htmlFor="ovr-url" className="text-xs font-semibold">arena2api base URL</Label>
-            <Input id="ovr-url" data-testid="override-url-input" aria-invalid={Boolean(urlError)} className="h-8 bg-card font-mono text-[12.5px]" value={overrides.arena_url} onChange={(e) => setOverrides((o) => ({ ...o, arena_url: e.target.value }))} />
-            {urlError && <p className="text-xs font-medium text-coral">{urlError}</p>}
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="ovr-model" className="text-xs font-semibold">Model</Label>
-            <Input id="ovr-model" data-testid="override-model-input" aria-invalid={Boolean(modelError)} className={cn('h-8 bg-card font-mono text-[12.5px]')} value={overrides.model} onChange={(e) => setOverrides((o) => ({ ...o, model: e.target.value }))} />
-            {modelError && <p className="text-xs font-medium text-coral">{modelError}</p>}
-          </div>
-          <p className="text-xs text-muted-foreground sm:col-span-2">Applied to the next Resume or Restart.</p>
+        <div className="space-y-3 rounded-lg border border-border bg-paper p-3.5" data-testid="overrides-panel">
+          <ProviderModelFields
+            value={overrides}
+            onChange={setOverrides}
+            providers={providers}
+            legacyUrl={job.config.provider ? null : job.config.arena_url}
+            idPrefix="override"
+            compact
+          />
+          <p className="text-xs text-muted-foreground">Applied to the next Resume or Restart.</p>
         </div>
       </CollapsibleContent>
     </Collapsible>

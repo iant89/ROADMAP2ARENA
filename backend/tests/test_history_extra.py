@@ -135,7 +135,7 @@ def test_transcript_json_matches_steps():
     assert r.status_code == 200 and r.headers["content-type"].startswith("application/json")
     t = r.json()
     keys = {"job_id", "title", "model", "arena_url", "status", "created_at", "finished_at", "project_context",
-            "step_total", "steps_done", "turns"}
+            "step_total", "steps_done", "turns", "provider"}
     assert set(t) == keys, set(t) ^ keys
     j = job(jid)
     assert t["job_id"] == jid and t["title"] == XSS_TITLE and t["project_context"] == XSS_CTX
@@ -325,10 +325,12 @@ def test_clone_source_and_cloned_from():
     src = get(f"/jobs/{src_id}/clone-source")
     assert src.status_code == 200
     cs = src.json()
-    assert set(cs) == {"source_job_id", "title", "arena_url", "model", "project_context", "roadmap_md", "step_total"}
+    assert set(cs) == {"source_job_id", "title", "arena_url", "model", "project_context", "roadmap_md", "step_total",
+                       "provider"}
     j = job(src_id)
     assert cs == {"source_job_id": src_id, "title": j["title"], "arena_url": j["arena_url"], "model": j["model"],
-                  "project_context": j["project_context"], "roadmap_md": j["roadmap_md"], "step_total": 3}
+                  "project_context": j["project_context"], "roadmap_md": j["roadmap_md"], "step_total": 3,
+                  "provider": j["provider"]}
     cj = job(clone)
     assert cj["cloned_from"] == src_id and cj["status"] == "done" and cj["restarted_from"] is None
     assert cj["project_context"] == XSS_CTX + " (edited)" and cj["steps"][2]["title"] == "Third step edited"

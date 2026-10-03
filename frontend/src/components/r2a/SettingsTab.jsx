@@ -9,27 +9,17 @@ import { getSettings, resetSettings, saveSettings } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import NotificationSettings from './NotificationSettings'
 import GitHubSettings from './GitHubSettings'
+import ProvidersSettings from './ProvidersSettings'
 import { formatDateTime } from './status'
 
 const FIELDS = [
-  { key: 'arena_url', label: 'Default arena2api base URL', mono: true, hint: 'Pre-filled in the Create job form.' },
-  { key: 'model', label: 'Default model', mono: true, hint: 'Pre-filled in the Create job form.' },
+  { key: 'model', label: 'Default model', mono: true, hint: 'Pre-filled in the Create job form when the provider has no default model.' },
   { key: 'step_delay_seconds', label: 'Step delay (seconds)', number: true, min: 0, max: 600, hint: 'Pause between steps, 0-600.' },
-  { key: 'request_timeout_seconds', label: 'Request timeout (seconds)', number: true, min: 10, max: 3600, hint: 'Per arena2api request, 10-3600.' },
+  { key: 'request_timeout_seconds', label: 'Request timeout (seconds)', number: true, min: 10, max: 3600, hint: 'Per provider request, 10-3600.' },
 ]
-
-function isHttpUrl(value) {
-  try {
-    const u = new URL(value.trim())
-    return (u.protocol === 'http:' || u.protocol === 'https:') && Boolean(u.host)
-  } catch {
-    return false
-  }
-}
 
 function validate(values) {
   const errors = {}
-  if (!isHttpUrl(values.arena_url)) errors.arena_url = 'Use an http:// or https:// URL'
   if (!values.model.trim()) errors.model = 'Model is required'
   for (const f of FIELDS.filter((x) => x.number)) {
     const raw = String(values[f.key]).trim()
@@ -39,7 +29,7 @@ function validate(values) {
   return errors
 }
 
-const toForm = (s) => ({ arena_url: s.arena_url, model: s.model, step_delay_seconds: String(s.step_delay_seconds), request_timeout_seconds: String(s.request_timeout_seconds) })
+const toForm = (s) => ({ model: s.model, step_delay_seconds: String(s.step_delay_seconds), request_timeout_seconds: String(s.request_timeout_seconds) })
 
 // Settings tab: runtime defaults stored in MongoDB (GET/PUT /api/settings).
 export default function SettingsTab({ onSaved }) {
@@ -80,7 +70,7 @@ export default function SettingsTab({ onSaved }) {
     setBusy(true)
     try {
       apply(await saveSettings({
-        arena_url: values.arena_url.trim(),
+        arena_url: saved.arena_url, // legacy fallback URL, now managed as the migrated provider
         model: values.model.trim(),
         step_delay_seconds: Number(values.step_delay_seconds),
         request_timeout_seconds: Number(values.request_timeout_seconds),
@@ -145,7 +135,7 @@ export default function SettingsTab({ onSaved }) {
           <Button onClick={handleSave} disabled={busy || !dirty || Object.keys(errors).length > 0} data-testid="settings-save"><Save /> Save settings</Button>
           {confirmReset ? (
             <span className="flex items-center gap-2" data-testid="settings-reset-confirm">
-              <span className="text-xs font-medium">Replace all four values with the .env defaults?</span>
+              <span className="text-xs font-medium">Replace these values with the .env defaults?</span>
               <Button size="sm" variant="outline" onClick={handleReset} disabled={busy} data-testid="settings-reset-yes"><RotateCcw /> Reset</Button>
               <Button size="sm" variant="ghost" onClick={() => setConfirmReset(false)}><X /> Cancel</Button>
             </span>
@@ -156,6 +146,7 @@ export default function SettingsTab({ onSaved }) {
           {saved.updated_at && <span className="ml-auto text-xs text-muted-foreground">Last saved {formatDateTime(saved.updated_at)}</span>}
         </div>
       </section>
+      <ProvidersSettings />
       <NotificationSettings />
       <GitHubSettings />
     </div>
