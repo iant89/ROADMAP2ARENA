@@ -11,7 +11,7 @@ on:
       - 'compose.integration.yml'
       - '.github/workflows/integration.yml'
   push:
-    branches: ['main', 'arena/01a0fbd7-roadmap2arena']
+    branches: ['main']
     paths:
       - 'backend/**'
       - 'gateway/**'
