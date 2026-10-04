@@ -7,7 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cancelQueued, moveQueued, pauseQueued, unpauseQueued } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { StatusChip, relativeTime } from './status'
+import { StatusChip, providerName, relativeTime } from './status'
 
 const CONFIRM_MS = 5000
 
@@ -38,7 +38,7 @@ function RunningCard({ job, onOpen }) {
         <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">{job.steps_done}/{job.step_total} steps</span>
       </div>
       <p className="mt-2 text-xs text-muted-foreground">
-        <span className="font-mono">{job.model}</span> - started {relativeTime(job.started_at || job.created_at)}
+        <span className="font-mono">{job.model}</span> via <span className="font-medium" data-testid="queue-running-provider">{providerName(job.provider)}</span> - started {relativeTime(job.started_at || job.created_at)}
       </p>
     </div>
   )
@@ -65,6 +65,7 @@ function QueueRow({ job, first, last, busy, onAction, onOpen }) {
         <p className="truncate text-[13.5px] font-medium group-hover:underline">{job.title || 'Untitled roadmap'}</p>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
           <span className="font-mono">{job.model}</span>
+          <span>via <span className="font-medium" data-testid="queue-job-provider">{providerName(job.provider)}</span></span>
           <span>-</span>
           <span>{job.step_total} step{job.step_total === 1 ? '' : 's'}</span>
           <span>-</span>

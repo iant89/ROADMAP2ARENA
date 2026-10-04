@@ -18,7 +18,7 @@ import JobControls from './JobControls'
 import LogPanel from './LogPanel'
 import RoadmapChecklist from './RoadmapChecklist'
 import { QueuedAlert } from './JobView'
-import { StatusChip, formatDateTime } from './status'
+import { StatusChip, formatDateTime, providerName } from './status'
 
 function Count({ n }) {
   return <span className="hidden rounded-full bg-secondary px-1.5 font-mono sm:inline-flex text-[10.5px] text-secondary-foreground">{n}</span>
@@ -90,7 +90,8 @@ export default function HistoryDetail({ jobId, onOpenJob, onOpenQueue, onQueueCh
             <p className="mt-1 truncate text-[12.5px]">
               <span className="font-mono font-medium">{job.config.model}</span>
               <span className="mx-1.5 text-muted-foreground">via</span>
-              <span className="font-mono text-muted-foreground">{job.config.arena_url}</span>
+              <span className="font-medium" data-testid="job-provider-name">{providerName(job.config.provider)}</span>
+              <span className="ml-1.5 font-mono text-muted-foreground" title={job.config.arena_url}>{job.config.provider?.base_url || job.config.arena_url}</span>
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

@@ -6,7 +6,17 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getCloneSource, parseRoadmap, startJob } from '@/lib/api'
+import { useProviders } from '@/hooks/useProviders'
 import StartForm from './StartForm'
+
+// Form values for a clone: the source's provider when it still exists; a deleted provider falls
+// back to the default provider (with a note); a legacy job keeps its own arena2api URL.
+function formFrom(s, providerData) {
+  const base = { model: s.model, project_context: s.project_context, roadmap_md: s.roadmap_md }
+  if (!s.provider) return { ...base, provider_id: '', arena_url: s.arena_url }
+  const exists = providerData?.providers.some((p) => p.id === s.provider.id)
+  return { ...base, provider_id: exists ? s.provider.id : (providerData?.default_provider_id || ''), arena_url: '' }
+}
 
 const PARSE_DEBOUNCE_MS = 250
 
@@ -18,6 +28,9 @@ export default function CloneJobSheet({ sourceId, open, onOpenChange, queue, set
   const [loadError, setLoadError] = useState(null)
   const [stepCount, setStepCount] = useState(0)
   const [submitting, setSubmitting] = useState(false)
+  const { data: providerData } = useProviders()
+  const sourceForm = source && providerData ? formFrom(source, providerData) : null
+  const providerGone = Boolean(source?.provider && providerData && !providerData.providers.some((p) => p.id === source.provider.id))
 
   useEffect(() => {
     if (!open || !sourceId) return undefined
@@ -29,11 +42,15 @@ export default function CloneJobSheet({ sourceId, open, onOpenChange, queue, set
       .then((s) => {
         if (!alive) return
         setSource(s)
-        setForm({ arena_url: s.arena_url, model: s.model, project_context: s.project_context, roadmap_md: s.roadmap_md })
       })
       .catch((err) => alive && setLoadError(err.message))
     return () => { alive = false }
   }, [open, sourceId])
+
+  // Fill the form once both the source job and the provider list are loaded.
+  useEffect(() => {
+    if (sourceForm && !form) setForm(sourceForm)
+  }, [sourceForm, form])
 
   const roadmap = form?.roadmap_md
   useEffect(() => {
@@ -60,8 +77,8 @@ export default function CloneJobSheet({ sourceId, open, onOpenChange, queue, set
     }
   }
 
-  const edited = source && form && (form.arena_url !== source.arena_url || form.model !== source.model
-    || form.project_context !== source.project_context || form.roadmap_md !== source.roadmap_md)
+  const edited = sourceForm && form && ['provider_id', 'arena_url', 'model', 'project_context', 'roadmap_md']
+    .some((k) => (form[k] ?? '') !== (sourceForm[k] ?? ''))
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -82,10 +99,15 @@ export default function CloneJobSheet({ sourceId, open, onOpenChange, queue, set
                 {edited && (
                   <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-paper px-3.5 py-2 text-xs text-muted-foreground" data-testid="clone-edited-note">
                     Edited - differs from the source job.
-                    <Button size="xs" variant="ghost" onClick={() => setForm({ arena_url: source.arena_url, model: source.model, project_context: source.project_context, roadmap_md: source.roadmap_md })} data-testid="clone-reset-button">
+                    <Button size="xs" variant="ghost" onClick={() => setForm(sourceForm)} data-testid="clone-reset-button">
                       <RotateCcw /> Reset to source
                     </Button>
                   </div>
+                )}
+                {providerGone && (
+                  <p className="rounded-lg border border-amber/40 bg-amber-soft px-3.5 py-2 text-xs" data-testid="clone-provider-gone">
+                    The source job used provider <strong>{source.provider.name}</strong>, which was deleted. Pick a provider for the clone.
+                  </p>
                 )}
                 <StartForm
                   form={form}
@@ -96,6 +118,7 @@ export default function CloneJobSheet({ sourceId, open, onOpenChange, queue, set
                   queueInfo={queue ? { running: Boolean(queue.running), waiting: queue.waiting } : null}
                   settings={settings}
                   submitLabel="Add clone to queue"
+                  legacyUrl={source && !source.provider ? source.arena_url : null}
                 />
               </>
             )}

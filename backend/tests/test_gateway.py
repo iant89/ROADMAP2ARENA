@@ -357,7 +357,7 @@ class GatewayApiTests(unittest.IsolatedAsyncioTestCase):
         sdk_http = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=self.module.app), trust_env=False)
         real_factory = lambda **kw: AsyncOpenAI(http_client=sdk_http, **kw)
         with patch("arena_client.AsyncOpenAI", side_effect=real_factory):
-            client = ArenaClient("http://gateway.test", "Demo Text", 20, api_key=DUMMY_KEY)
+            client = ArenaClient("http://gateway.test/v1", "Demo Text", 20, api_key=DUMMY_KEY)
         try:
             first = await client.complete("Step one")
             self.assertEqual(first, self.reply)
@@ -375,7 +375,7 @@ class GatewayApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_sdk_receives_disconnect_as_503(self):
         sdk_http = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=self.module.app), trust_env=False)
         with patch("arena_client.AsyncOpenAI", side_effect=lambda **kw: AsyncOpenAI(http_client=sdk_http, **kw)):
-            client = ArenaClient("http://gateway.test", "Demo Text", 20, api_key=DUMMY_KEY)
+            client = ArenaClient("http://gateway.test/v1", "Demo Text", 20, api_key=DUMMY_KEY)
         try:
             with self.assertRaises(APIStatusError) as caught:
                 await client.complete("Hi")

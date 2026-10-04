@@ -20,6 +20,7 @@ from pymongo import ASCENDING, DESCENDING
 
 import app_settings
 import orchestrator
+import providers
 import scheduler
 import settings
 from artifact_extractor import clean_zip_path
@@ -36,6 +37,7 @@ from git_integration import router as git_router
 import github_integration
 from github_integration import router as github_router
 from queue_routes import queue_state, router as queue_router
+from provider_routes import router as provider_router
 from roadmap_parser import parse_roadmap, roadmap_title
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -59,6 +61,9 @@ async def lifespan(_: FastAPI):
     await db.notifications.create_index([("id", ASCENDING)], unique=True)
     await db.notifications.create_index([("created_at", DESCENDING)])
     await app_settings.seed(db, now_iso())
+    await providers.ensure_indexes(db)
+    if await providers.migrate(db, now_iso()):
+        logger.info("migrated the arena2api URL setting into the default provider")
     try:  # F-006: job repos moved out of backend/ (uvicorn --reload watch) to R2A_DATA_DIR
         await asyncio.to_thread(repos.migrate_legacy_data)
     except Exception:  # noqa: BLE001 - never block startup; repos that did not move are reported
@@ -132,11 +137,29 @@ class JobCreate(BaseModel):
     project_context: str = ""
     roadmap_md: str = Field(default="")
     cloned_from: str | None = None  # source job id when submitted from "Clone job"
+    provider_id: str | None = None  # see contracts.md "Providers"
 
 
-def validate_job_input(body: JobCreate, cfg: dict) -> tuple[str, str, list[dict]]:
-    arena_url = (body.arena_url if body.arena_url is not None else cfg["arena_url"]).strip()
-    model = (body.model if body.model is not None else cfg["model"]).strip()
+async def resolve_provider(provider_id: str | None, arena_url: str | None, *, use_default: bool) -> dict | None:
+    """Provider doc for a new run, or None for a legacy (arena_url) job. 422 for an unknown id."""
+    if provider_id is not None:
+        doc = await providers.get_doc(db, provider_id)
+        if not doc:
+            raise HTTPException(status_code=422, detail=f"provider_id: provider {provider_id} not found")
+        return doc
+    if arena_url is not None or not use_default:
+        return None
+    default = await providers.default_id(db)
+    return await providers.get_doc(db, default) if default else None
+
+
+def validate_job_input(body: JobCreate, cfg: dict, provider: dict | None = None) -> tuple[str, str, list[dict]]:
+    if provider:
+        arena_url = provider["base_url"]
+        model = (body.model if body.model is not None else (provider.get("default_model") or cfg["model"])).strip()
+    else:
+        arena_url = (body.arena_url if body.arena_url is not None else cfg["arena_url"]).strip()
+        model = (body.model if body.model is not None else cfg["model"]).strip()
     errors = []
     parsed = urlparse(arena_url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -154,13 +177,27 @@ def validate_job_input(body: JobCreate, cfg: dict) -> tuple[str, str, list[dict]
 
 
 class JobOverrides(BaseModel):
-    """Optional overrides for restart/resume (e.g. to fix a wrong model)."""
+    """Optional overrides for restart/resume (e.g. to fix a wrong model or switch provider)."""
     arena_url: str | None = None
     model: str | None = None
+    provider_id: str | None = None
 
 
-def validate_overrides(body: JobOverrides | None, job: dict) -> tuple[str, str]:
-    arena_url = (body.arena_url if body and body.arena_url is not None else job["arena_url"]).strip()
+async def override_provider(body: JobOverrides | None, job: dict) -> dict | None:
+    """Provider snapshot for a resumed/restarted run: provider_id switches, an arena_url
+    override alone makes it a legacy job, otherwise the job keeps its snapshot."""
+    if body and body.provider_id is not None:
+        return providers.snapshot(await resolve_provider(body.provider_id, None, use_default=False))
+    if body and body.arena_url is not None:
+        return None
+    return job.get("provider")
+
+
+def validate_overrides(body: JobOverrides | None, job: dict, provider: dict | None = None) -> tuple[str, str]:
+    if provider is not None:
+        arena_url = provider["base_url"]
+    else:
+        arena_url = (body.arena_url if body and body.arena_url is not None else job["arena_url"]).strip()
     model = (body.model if body and body.model is not None else job["model"]).strip()
     errors = []
     parsed = urlparse(arena_url)
@@ -174,7 +211,8 @@ def validate_overrides(body: JobOverrides | None, job: dict) -> tuple[str, str]:
 
 
 async def insert_job(arena_url: str, model: str, project_context: str, roadmap_md: str,
-                     steps: list[dict], restarted_from: str | None = None, cloned_from: str | None = None) -> str:
+                     steps: list[dict], restarted_from: str | None = None, cloned_from: str | None = None,
+                     provider: dict | None = None) -> str:
     """Insert a job at the end of the queue. Call under scheduler.lock."""
     job_id = str(uuid.uuid4())
     ts = now_iso()
@@ -182,6 +220,8 @@ async def insert_job(arena_url: str, model: str, project_context: str, roadmap_m
         "id": job_id, "status": "queued", "queue_position": await scheduler.end_position(db),
         "queued_at": ts, "started_at": None, "created_at": ts, "updated_at": ts, "finished_at": None,
         "arena_url": arena_url, "model": model, "project_context": project_context,
+        # non-secret provider snapshot {id, name, preset, base_url}; None = legacy arena_url job
+        "provider": provider,
         "roadmap_md": roadmap_md, "title": roadmap_title(roadmap_md) or steps[0]["title"],
         "step_total": len(steps), "steps_done": 0, "error": None, "failed_step": None,
         "stopped_step": None, "restarted_from": restarted_from, "cloned_from": cloned_from, "log": [],
@@ -233,19 +273,21 @@ async def parse(body: ParseRequest):
 
 @api.post("/jobs", status_code=201)
 async def create_job(body: JobCreate):
-    arena_url, model, steps = validate_job_input(body, await app_settings.get(db))
+    provider = await resolve_provider(body.provider_id, body.arena_url, use_default=True)
+    arena_url, model, steps = validate_job_input(body, await app_settings.get(db), provider)
+    snap = providers.snapshot(provider) if provider else None
     if body.cloned_from is not None and not await db.jobs.find_one({"id": body.cloned_from}, {"_id": 1}):
         raise HTTPException(status_code=422, detail=f"cloned_from: job {body.cloned_from} not found")
     async with scheduler.lock:
         job_id = await insert_job(arena_url, model, body.project_context, body.roadmap_md, steps,
-                                  cloned_from=body.cloned_from)
+                                  cloned_from=body.cloned_from, provider=snap)
         await scheduler.start_next_locked(db)
         await queued_note(job_id)
         state = await queue_state(job_id)
     return {"job_id": job_id, **state}
 
 
-LIST_FIELDS = ("project_id", "status", "created_at", "step_total", "steps_done", "title", "model", "failed_step", "stopped_step",
+LIST_FIELDS = ("project_id", "status", "created_at", "step_total", "steps_done", "title", "model", "provider", "failed_step", "stopped_step",
                "restarted_from", "cloned_from", "queue_position", "queued_at", "started_at", "finished_at")
 
 
@@ -287,6 +329,7 @@ async def get_job(job_id: str):
         "finished_at": job.get("finished_at"),
         "arena_url": job["arena_url"],
         "model": job["model"],
+        "provider": job.get("provider"),
         "project_context": job.get("project_context", ""),
         "roadmap_md": job.get("roadmap_md", ""),
         "step_total": job["step_total"],
@@ -342,7 +385,8 @@ async def restart_job(job_id: str, body: JobOverrides | None = None):
     job = await get_job_or_404(job_id)
     if job["status"] not in FINISHED:
         raise HTTPException(status_code=409, detail=f"Job is {job['status']}, only a finished job can be restarted")
-    arena_url, model = validate_overrides(body, job)
+    provider = await override_provider(body, job)
+    arena_url, model = validate_overrides(body, job, provider)
     steps = parse_roadmap(job["roadmap_md"])
     async with scheduler.lock:
         # One active restart per job: guards against double clicks / parallel requests.
@@ -351,7 +395,7 @@ async def restart_job(job_id: str, body: JobOverrides | None = None):
         if active:
             raise HTTPException(status_code=409, detail=f"A restart of this job is already {active['status']} (job {active['id']})")
         new_id = await insert_job(arena_url, model, job.get("project_context", ""), job["roadmap_md"], steps,
-                                  restarted_from=job_id)
+                                  restarted_from=job_id, provider=provider)
         await scheduler.start_next_locked(db)
         await queued_note(new_id)
         state = await queue_state(new_id)
@@ -363,7 +407,8 @@ async def resume_job(job_id: str, body: JobOverrides | None = None):
     job = await get_job_or_404(job_id)
     if job["status"] not in RESUMABLE:
         raise HTTPException(status_code=409, detail=f"Job is {job['status']}, only an error, stopped or cancelled job can be resumed")
-    arena_url, model = validate_overrides(body, job)
+    provider = await override_provider(body, job)
+    arena_url, model = validate_overrides(body, job, provider)
     async with scheduler.lock:
         current = await db.jobs.find_one({"id": job_id}, {"_id": 0, "status": 1})
         if current["status"] not in RESUMABLE:  # e.g. a parallel resume already queued it
@@ -382,9 +427,12 @@ async def resume_job(job_id: str, body: JobOverrides | None = None):
         await db.jobs.update_one({"id": job_id}, {"$set": {
             "status": "queued", "queue_position": await scheduler.end_position(db), "queued_at": ts,
             "error": None, "failed_step": None, "stopped_step": None, "finished_at": None,
-            "arena_url": arena_url, "model": model, "steps_done": done, "updated_at": ts,
+            "arena_url": arena_url, "model": model, "provider": provider, "steps_done": done, "updated_at": ts,
         }})
         changes = []
+        old_provider = job.get("provider") or {}
+        if old_provider.get("id") != (provider or {}).get("id"):
+            changes.append(f"provider {old_provider.get('name') or 'legacy URL'} -> {(provider or {}).get('name') or 'legacy URL'}")
         if arena_url != job["arena_url"]:
             changes.append(f"arena_url {job['arena_url']} -> {arena_url}")
         if model != job["model"]:
@@ -433,3 +481,4 @@ app.include_router(deletion_router)
 app.include_router(notification_router)
 app.include_router(git_router)
 app.include_router(github_router)
+app.include_router(provider_router)

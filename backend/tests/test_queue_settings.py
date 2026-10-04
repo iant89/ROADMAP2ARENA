@@ -363,7 +363,8 @@ def test_q_list_filters_and_shapes():
     assert r.status_code == 200 and all(x["status"] in ("done", "cancelled") for x in r.json())
     keys = {"job_id", "project_id", "status", "created_at", "step_total", "steps_done", "title", "model", "failed_step",
             "stopped_step", "restarted_from", "queue_position", "queued_at", "started_at", "finished_at", "paused",
-            "cloned_from"}  # added with Clone job (feat/history-panel)
+            "cloned_from",  # added with Clone job (feat/history-panel)
+            "provider"}  # added with providers
     for x in r.json():
         assert set(x) == keys, set(x) ^ keys
     assert len(get("/jobs", params={"limit": 1}).json()) == 1
@@ -439,7 +440,15 @@ def test_s_new_runs_use_settings():
     a = r.json()["job_id"]
     CREATED.append(a)
     j = wait(a)
-    assert j["model"] == "stub-503" and j["arena_url"] == STUB and j["status"] == "error"
+    # Without provider_id/arena_url a job uses the default provider (the one migrated from the
+    # settings URL at first start); the legacy settings URL is only used when there is none.
+    prov = get("/providers").json()
+    default = next((p for p in prov["providers"] if p["id"] == prov["default_provider_id"]), None)
+    if default:
+        assert j["provider"]["id"] == default["id"] and j["arena_url"] == default["base_url"], j["provider"]
+        assert j["model"] == (default["default_model"] or "stub-503") and j["status"] == "error"
+    else:
+        assert j["provider"] is None and j["model"] == "stub-503" and j["arena_url"] == STUB and j["status"] == "error"
     assert "check that the arena2api Chrome tab is open" in j["error"]
     assert log_has(a, r"Job started: .*step delay 0s, timeout 15s"), [e["msg"] for e in j["log"]]
     # delay 0 -> steps back to back

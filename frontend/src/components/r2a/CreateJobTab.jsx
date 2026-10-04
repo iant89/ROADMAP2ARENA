@@ -44,7 +44,7 @@ export default function CreateJobTab({ form, setForm, settings, queue, onCreated
       <section className="space-y-5 rounded-xl border border-border bg-card p-5 shadow-sm lg:p-6">
         <div>
           <h2 className="text-lg font-semibold tracking-tight">New job</h2>
-          <p className="text-[13px] text-muted-foreground">Point at arena2api, paste a roadmap, and add it to the queue.</p>
+          <p className="text-[13px] text-muted-foreground">Pick a provider and model, paste a roadmap, and add it to the queue.</p>
         </div>
         <StartForm
           form={form}

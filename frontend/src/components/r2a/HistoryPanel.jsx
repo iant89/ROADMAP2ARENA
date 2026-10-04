@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { listJobs } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import HistoryBulkBar from './HistoryBulkBar'
-import { STATUS_META, StatusChip, StatusIcon, formatDateTime } from './status'
+import { STATUS_META, StatusChip, StatusIcon, formatDateTime, providerName } from './status'
 
 const STORAGE_KEY = 'r2a.historyPanel.collapsed'
 const LIMIT = 200
@@ -124,7 +124,7 @@ export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDeskt
   const selected = [...picked].every((id) => live.has(id)) ? picked : new Set([...picked].filter((id) => live.has(id)))
   const q = query.trim().toLowerCase()
   const shown = (jobs ?? []).filter((j) => (filter === 'all' || j.status === filter)
-    && (!q || j.title.toLowerCase().includes(q) || (j.model || '').toLowerCase().includes(q) || j.id.startsWith(q)))
+    && (!q || j.title.toLowerCase().includes(q) || (j.model || '').toLowerCase().includes(q) || providerName(j.provider).toLowerCase().includes(q) || j.id.startsWith(q)))
 
   if (collapsed && isDesktop) return <Rail jobs={jobs} selectedId={selectedId} onSelect={onSelect} onExpand={() => setAndStore(false)} />
 
@@ -151,7 +151,7 @@ export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDeskt
           <div className="space-y-2.5 px-4 pb-3">
             <div className="relative">
               <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search title, model or id" className="h-8 bg-card pl-8 text-[13px]" data-testid="history-search" />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search title, model, provider or id" className="h-8 bg-card pl-8 text-[13px]" data-testid="history-search" />
             </div>
             <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by status" data-testid="history-filters">
               {FILTERS.map((f) => {
@@ -219,7 +219,7 @@ export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDeskt
                     </div>
                     <p className="mt-1.5 truncate text-[13px] font-medium">{j.title}</p>
                     <p className="mt-0.5 truncate text-[11.5px] text-muted-foreground">
-                      <span className="font-mono">{j.model}</span> - {j.steps_done}/{j.step_total} steps
+                      <span className="font-mono">{j.model}</span> via {providerName(j.provider)} - {j.steps_done}/{j.step_total} steps
                       {j.queue_position ? ` - #${j.queue_position} in queue` : ''}
                     </p>
                   </button>
