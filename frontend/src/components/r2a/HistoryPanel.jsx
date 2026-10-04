@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, CheckSquare, History, ListChecks, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Square } from 'lucide-react'
+import { Check, CheckSquare, History, Layers, ListChecks, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -15,6 +15,12 @@ const LIMIT = 200
 const POLL_MS = 4000
 const FILTERS = ['all', 'queued', 'paused', 'running', 'done', 'error', 'stopped', 'cancelled']
 const FINISHED = ['done', 'error', 'stopped', 'cancelled']
+// Status filter pills are icon + count only and wrap instead of scrolling; icons and colours are the
+// job status icons used everywhere else (STATUS_META), "All" gets a neutral stack icon.
+const FILTER_META = {
+  all: { label: 'All', icon: Layers, tone: 'text-foreground' },
+  ...Object.fromEntries(FILTERS.slice(1).map((f) => [f, STATUS_META[f]])),
+}
 
 function readCollapsed() {
   try { return window.localStorage.getItem(STORAGE_KEY) === '1' } catch { return false }
@@ -147,20 +153,36 @@ export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDeskt
               <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search title, model or id" className="h-8 bg-card pl-8 text-[13px]" data-testid="history-search" />
             </div>
-            <div className="flex flex-nowrap gap-1.5 overflow-x-auto pb-1" role="group" aria-label="Filter by status" data-testid="history-filters">
-              {FILTERS.map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setFilter(f)}
-                  aria-pressed={filter === f}
-                  data-testid={`history-filter-${f}`}
-                  className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap transition-colors',
-                    filter === f ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-muted-foreground hover:text-foreground')}
-                >
-                  {f === 'all' ? 'All' : STATUS_META[f].label} <span className="font-mono opacity-70">{counts[f] ?? 0}</span>
-                </button>
-              ))}
+            <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by status" data-testid="history-filters">
+              {FILTERS.map((f) => {
+                const meta = FILTER_META[f]
+                const Icon = meta.icon
+                const n = counts[f] ?? 0
+                const active = filter === f
+                const label = `${meta.label}: ${n}`
+                return (
+                  <Tooltip key={f}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => setFilter(f)}
+                        aria-pressed={active}
+                        aria-label={label}
+                        title={label}
+                        data-testid={`history-filter-${f}`}
+                        className={cn('inline-flex h-7 max-w-[4.5rem] flex-auto items-center justify-center gap-0.5 rounded-full border px-1 text-[11px] font-medium transition-colors outline-none',
+                          'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-paper',
+                          active ? 'border-foreground bg-card text-foreground shadow-sm ring-1 ring-foreground' : 'border-border bg-card text-muted-foreground hover:border-foreground/40 hover:text-foreground',
+                          !active && n === 0 && 'opacity-60')}
+                      >
+                        <Icon aria-hidden="true" className={cn('size-3.5 shrink-0', meta.tone)} />
+                        <span className="font-mono tabular-nums">{n}</span>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">{label}</TooltipContent>
+                  </Tooltip>
+                )
+              })}
             </div>
             {selecting && (
               <HistoryBulkBar visible={shown} selected={selected} setSelected={setPicked} finishedCount={finishedCount} onDeleted={handleDeleted} />
