@@ -1,6 +1,6 @@
 """Parse a ROADMAP.md into ordered steps.
 
-Rules (kept identical to frontend/src/lib/roadmapParser.js):
+Rules:
 1. "### <title>" starts a step; the body until the next "###" (or EOF) is the
    description. A "###" inside a fenced code block does not start a step.
 2. "- [ ] <title>" outside a ### block is a standalone step (empty description).
@@ -13,7 +13,7 @@ import re
 
 STEP_HEADING = re.compile(r"^###\s+(.+?)\s*#*\s*$")
 UNCHECKED_ITEM = re.compile(r"^\s*[-*+]\s+\[ \]\s+(.+?)\s*$")
-FENCE = re.compile(r"^\s*(```|~~~)")
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 H1 = re.compile(r"^#\s+(.+?)\s*$", re.M)
 
 
@@ -21,7 +21,7 @@ def parse_roadmap(markdown: str) -> list[dict]:
     text = (markdown or "").replace("\r\n", "\n").replace("\r", "\n")
     steps: list[dict] = []
     current: dict | None = None
-    in_fence = False
+    fence_marker: str | None = None
 
     def close() -> None:
         nonlocal current
@@ -30,16 +30,28 @@ def parse_roadmap(markdown: str) -> list[dict]:
             current = None
 
     for line in text.split("\n"):
-        if current is not None and FENCE.match(line):
-            in_fence = not in_fence
-            current["body"].append(line)
+        fence = FENCE.match(line)
+        if fence:
+            marker, suffix = fence.groups()
+            if fence_marker is None:
+                fence_marker = marker
+            elif (marker[0] == fence_marker[0] and len(marker) >= len(fence_marker)
+                  and not suffix.strip()):
+                fence_marker = None
+            if current is not None:
+                current["body"].append(line)
             continue
-        if not in_fence:
-            heading = STEP_HEADING.match(line)
-            if heading:
-                close()
-                current = {"title": heading.group(1).strip(), "body": []}
-                continue
+        # Track fences even in the preamble, before the first real step. A shorter
+        # fence or a different delimiter inside an example must not close it.
+        if fence_marker is not None:
+            if current is not None:
+                current["body"].append(line)
+            continue
+        heading = STEP_HEADING.match(line)
+        if heading:
+            close()
+            current = {"title": heading.group(1).strip(), "body": []}
+            continue
         if current is not None:
             current["body"].append(line)
             continue

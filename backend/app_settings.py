@@ -15,6 +15,23 @@ DELAY_RANGE = (0, 600)
 TIMEOUT_RANGE = (10, 3600)
 
 
+def gateway_api_key(arena_url: str) -> str | None:
+    """Use the server credential only for the explicitly configured gateway URL.
+
+    Jobs/settings can override arena_url. Never forward the gateway secret to an
+    arbitrary URL, alias, port or path selected in the browser.
+    """
+    if arena_url.strip().rstrip("/") == env.ARENA2API_URL.strip().rstrip("/"):
+        return env.ARENA2API_API_KEY or None
+    return None
+
+
+def redact_gateway_key(message: str) -> str:
+    """Do not persist or return a server key if a provider echoes it in an error."""
+    key = env.ARENA2API_API_KEY
+    return message.replace(key, "[redacted gateway key]") if key else message
+
+
 def env_defaults() -> dict:
     return {
         "arena_url": env.ARENA2API_URL,

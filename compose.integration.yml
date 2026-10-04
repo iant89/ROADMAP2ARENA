@@ -1,0 +1,18 @@
+# TEST ONLY: ephemeral real MongoDB. No app data or host directories are mounted.
+# test-integration.sh chooses a unique Compose project and discovers the random port.
+services:
+  mongo:
+    image: mongo:8.0
+    command: ["mongod", "--bind_ip_all", "--quiet"]
+    ports:
+      - "127.0.0.1::27017"
+    tmpfs:
+      - /data/db
+      - /data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "quit(db.adminCommand({ping:1}).ok ? 0 : 1)"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    restart: "no"

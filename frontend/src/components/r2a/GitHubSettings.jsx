@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import ConfirmButton from './ConfirmButton'
 import { formatDateTime } from './status'
 
-const KEY_CMD = '/app/venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+const KEY_CMD = './venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
 
 function CiBadge({ state }) {
   if (state === 'success') return <span className="inline-flex items-center gap-1 text-teal"><CheckCircleIcon size={12} /> checks passed</span>
@@ -192,7 +192,7 @@ export default function GitHubSettings() {
       {noKey && (
         <div role="alert" className="space-y-1.5 rounded-lg border border-coral/40 bg-coral/5 p-3 text-xs" data-testid="gh-key-missing">
           <p className="flex items-center gap-1.5 font-semibold text-coral"><LockKeyhole className="size-3.5" /> {gh.encryption === 'invalid' ? 'R2A_SECRET_KEY is not a valid Fernet key' : 'R2A_SECRET_KEY is not set'}</p>
-          <p className="text-muted-foreground">The GitHub token is stored encrypted. Add a key to <code>backend/.env</code> and restart the backend:</p>
+          <p className="text-muted-foreground">The GitHub token is stored encrypted. Run this from the repository root on the backend machine, add the key as <code>R2A_SECRET_KEY</code> in <code>backend/.env</code>, and restart the backend:</p>
           <code className="block overflow-x-auto whitespace-nowrap rounded bg-muted px-2 py-1">{KEY_CMD}</code>
         </div>
       )}

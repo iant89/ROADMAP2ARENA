@@ -401,7 +401,10 @@ def flow_notif_settings(page):
     g = api("/notifications/settings")
     assert not g["email"]["password_set"] and g["email"]["host"] == before["email"]["host"] and g["webhook"]["url"] == before["webhook"]["url"], g
     # browser notifications toggle (permission granted in this context)
-    bt = page.get_by_test_id("notif-browser-toggle"); expect(bt).to_be_visible(); info.append(f"{MODE} browser toggle enabled={bt.is_enabled()} perm={page.evaluate('typeof Notification!=="undefined" ? Notification.permission : "unsupported"')}")
+    bt = page.get_by_test_id("notif-browser-toggle")
+    expect(bt).to_be_visible()
+    permission = page.evaluate('typeof Notification !== "undefined" ? Notification.permission : "unsupported"')
+    info.append(f"{MODE} browser toggle enabled={bt.is_enabled()} perm={permission}")
     if bt.is_enabled():
         bt.click(); expect(bt).to_be_checked(); info.append(f"{MODE} browser status: {page.get_by_test_id('notif-browser-status').inner_text()[:80]!r}")
         bt.click(); expect(bt).not_to_be_checked()

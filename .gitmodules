@@ -1,0 +1,3 @@
+[submodule "services/arena2api"]
+	path = services/arena2api
+	url = https://github.com/flay-o/arena2api.git

@@ -47,13 +47,13 @@ def build_prompt(project_context: str, steps: list[dict], index: int, previous_f
 class ArenaClient:
     """One instance per job; keeps the conversation so later steps see earlier turns."""
 
-    def __init__(self, arena_url: str, model: str, timeout_seconds: float):
+    def __init__(self, arena_url: str, model: str, timeout_seconds: float, *, api_key: str | None = None):
         self.model = model
         self.history: list[dict] = []
         # max_retries=0: the orchestrator fails fast and reports the first error.
         self._client = AsyncOpenAI(
             base_url=f"{arena_url.rstrip('/')}/v1",
-            api_key="sk-anything",
+            api_key=api_key or "sk-anything",
             timeout=timeout_seconds,
             max_retries=0,
         )

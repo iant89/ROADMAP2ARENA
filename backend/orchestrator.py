@@ -26,6 +26,8 @@ from artifact_extractor import count_unnamed_blocks, extract_artifacts
 
 LOG_LIMIT = 500
 HINT_503 = "check that the arena2api Chrome tab is open and pushing tokens"
+HINT_401 = ("check that ARENA2API_API_KEY in backend/.env matches GATEWAY_API_KEY in gateway/.env - the key is "
+            "only sent when the job URL is exactly ARENA2API_URL")
 
 logger = logging.getLogger("roadmap2arena.orchestrator")
 # Registry of running job tasks by job_id (single uvicorn process).
@@ -90,6 +92,10 @@ async def append_log(db, job_id: str, level: str, msg: str) -> None:
 
 
 def describe_error(exc: Exception, arena_url: str, timeout_seconds: float) -> str:
+    return app_settings.redact_gateway_key(_describe_error(exc, arena_url, timeout_seconds))
+
+
+def _describe_error(exc: Exception, arena_url: str, timeout_seconds: float) -> str:
     if isinstance(exc, openai.APIStatusError):
         code = exc.status_code
         msg = f"arena2api returned {code}"
@@ -99,11 +105,13 @@ def describe_error(exc: Exception, arena_url: str, timeout_seconds: float) -> st
             err = body.get("error") if isinstance(body, dict) else None
             detail = err.get("message", "") if isinstance(err, dict) else (err or body.get("detail") or "")
         except Exception:  # noqa: BLE001 - body may not be JSON
-            detail = (exc.response.text or "")[:200]
+            detail = app_settings.redact_gateway_key(exc.response.text or "")[:200]
         if detail:
             msg += f": {detail}"
         if code == 503:
             msg += f" - {HINT_503}"
+        elif code == 401:
+            msg += f" - {HINT_401}"
         return msg
     if isinstance(exc, openai.APITimeoutError):
         return f"arena2api request timed out after {timeout_seconds:g}s"
@@ -218,7 +226,8 @@ async def run_job(db, job_id: str) -> None:
     # Current runtime settings (Mongo) apply to every new run, including resumes.
     cfg = await app_settings.get(db)
     delay, timeout = float(cfg["step_delay_seconds"]), float(cfg["request_timeout_seconds"])
-    client = ArenaClient(job["arena_url"], job["model"], timeout)
+    client = ArenaClient(job["arena_url"], job["model"], timeout,
+                         api_key=app_settings.gateway_api_key(job["arena_url"]))
     files: dict[str, int] = {}
 
     # Resume support: replay finished steps into the chat history and file list.
