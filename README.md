@@ -77,6 +77,7 @@ python3 -m venv venv
 ./venv/bin/python -m pip install -r backend/requirements-gateway.txt
 (cd frontend && yarn install --frozen-lockfile)
 cp backend/.env.example backend/.env
+./venv/bin/python scripts/ensure_secret_key.py backend/.env  # optional: GitHub key
 ```
 
 The combined requirements retain the application's exact dependency pins and
@@ -147,14 +148,19 @@ a backend on another machine.
 
 ### Optional GitHub setup
 
-To connect GitHub from Settings, generate an encryption key:
+To connect GitHub from Settings, the backend needs a Fernet encryption key in
+`R2A_SECRET_KEY` in `backend/.env`. **`./setup.sh` generates it automatically** when
+it is missing or empty and never overwrites an existing one; the key is never
+printed and the file is set to mode 600. Without `setup.sh` (for example local
+development), run only that step:
 
 ```bash
-./venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+./venv/bin/python scripts/ensure_secret_key.py backend/.env
+# tests (temp dirs only): ./venv/bin/python scripts/test_ensure_secret_key.py
 ```
 
-Put that value in `R2A_SECRET_KEY` in `backend/.env`; keep it private and stable.
-Changing it makes stored tokens unreadable and requires reconnecting. GitHub tokens
+Keep the key private and stable, and back up `backend/.env`. Losing or changing it
+makes stored tokens unreadable and requires reconnecting GitHub. GitHub tokens
 are encrypted at rest and are never returned by the API. Optional settings:
 
 - `GITHUB_OAUTH_CLIENT_ID`: OAuth app client ID with device flow enabled. It can

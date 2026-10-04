@@ -143,6 +143,9 @@ if [ -f backend/requirements.txt ]; then
   if [ "$GATEWAY" = "1" ]; then REQUIREMENTS="backend/requirements-gateway.txt"; fi
   ./venv/bin/pip install -r "$REQUIREMENTS"
   if [ "$GATEWAY" = "1" ]; then ./run-gateway.sh --check >/dev/null; fi
+  # R2A_SECRET_KEY (Fernet key for the stored GitHub token): generated once, never overwritten
+  log "backend/.env: R2A_SECRET_KEY"
+  ./venv/bin/python scripts/ensure_secret_key.py backend/.env
   [ -f backend/server.py ] && HAS_BACKEND=1
 else
   echo "backend/requirements.txt not found - skipping backend venv"
