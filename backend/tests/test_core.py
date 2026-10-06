@@ -145,19 +145,22 @@ class ProjectMetadataTests(unittest.TestCase):
     }
 
     def test_repository_metadata_is_bound_to_requested_repository(self):
-        repository = project_routes._validated_repository(self.REPOSITORY, "r2a-tester/existing-repo")
-        self.assertEqual(repository["full_name"], "r2a-tester/existing-repo")
-        self.assertEqual(repository["branch"], "main")
-        self.assertEqual(repository["html_url"], self.REPOSITORY["html_url"])
+        # Integration tests set GITHUB_API_URL to an inert loopback URL. This unit case
+        # deliberately tests GitHub.com's production host allowlist without making a request.
+        with patch.dict(os.environ, {"GITHUB_API_URL": "https://api.github.com"}):
+            repository = project_routes._validated_repository(self.REPOSITORY, "r2a-tester/existing-repo")
+            self.assertEqual(repository["full_name"], "r2a-tester/existing-repo")
+            self.assertEqual(repository["branch"], "main")
+            self.assertEqual(repository["html_url"], self.REPOSITORY["html_url"])
 
-        for changes in (
-            {"full_name": "another-owner/other-repo"},
-            {"html_url": "https://github.com.evil.example/r2a-tester/existing-repo"},
-            {"html_url": "javascript:alert(1)"},
-            {"clone_url": "https://user:secret@github.com/r2a-tester/existing-repo.git"},
-        ):
-            with self.subTest(changes=changes), self.assertRaises(HTTPException):
-                project_routes._validated_repository({**self.REPOSITORY, **changes}, "r2a-tester/existing-repo")
+            for changes in (
+                {"full_name": "another-owner/other-repo"},
+                {"html_url": "https://github.com.evil.example/r2a-tester/existing-repo"},
+                {"html_url": "javascript:alert(1)"},
+                {"clone_url": "https://user:secret@github.com/r2a-tester/existing-repo.git"},
+            ):
+                with self.subTest(changes=changes), self.assertRaises(HTTPException):
+                    project_routes._validated_repository({**self.REPOSITORY, **changes}, "r2a-tester/existing-repo")
 
 
 class InputAndGitRefTests(unittest.TestCase):
