@@ -241,9 +241,31 @@ async def run_job(db, job_id: str) -> None:
                                              f"step delay {delay:g}s, timeout {timeout:g}s")
     try:
         await _run_hooks(on_run_start, db, job_id)
+        repository_files = None
+        if job.get("project_id") and job.get("project_commit") and any(s["index"] == 1 for s in todo):
+            # Delayed to avoid a module cycle: repos imports now_iso from this module.
+            import repos
+
+            project_repo = await repos.find(db, "job", job_id)
+            if not project_repo or not repos.exists_on_disk(project_repo):
+                raise RuntimeError("Project source repository is missing")
+            try:
+                # The local baseline is the same source tree as project_commit. A shallow
+                # import may use a parentless snapshot SHA so its job history is pushable.
+                snapshot = await repos.snapshot(
+                    project_repo, ref=job.get("project_base_commit") or job["project_commit"],
+                    exclude=repos.PROJECT_CONTEXT_EXCLUDES, budget_bytes=60_000, max_file_bytes=20_000,
+                )
+            except Exception as exc:  # noqa: BLE001 - a project job must not silently run without its source tree
+                raise RuntimeError(f"Could not read the pinned project source snapshot ({type(exc).__name__})") from None
+            repository_files = snapshot["files"]
+            omitted = sum(1 for item in snapshot["tree"] if not item["included"])
+            await append_log(db, job_id, "info", f"Project: loaded source commit {job['project_commit'][:7]} - "
+                                                   f"{len(repository_files)} text file(s), {omitted} omitted by safety/size limits")
         for step in todo:
             idx = step["index"]
-            prompt = build_prompt(job.get("project_context", ""), steps, idx, sorted(files))
+            prompt = build_prompt(job.get("project_context", ""), steps, idx, sorted(files),
+                                  repository_files if idx == 1 else None)
             await db.steps.update_one(
                 {"job_id": job_id, "index": idx},
                 {"$set": {"status": "running", "prompt": prompt, "started_at": now_iso()}},

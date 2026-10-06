@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
-export const TABS = ['create', 'queue', 'current', 'history', 'settings']
+export const TABS = ['create', 'queue', 'current', 'history', 'projects', 'settings']
 
 // ?tab=<tab>&job=<id>. A bare ?job=<id> (old deep links) opens the job in history.
 function read() {

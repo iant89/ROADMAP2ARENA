@@ -15,9 +15,15 @@ FastAPI's `{"detail": "..."}` shape.
 | PUT | `/api/settings` body: any subset of the 4 fields | same shape as GET (saved) | 422 unknown key, arena_url not http(s), empty model, delay not 0-600, timeout not 10-3600, non-number/bool, bad JSON |
 | POST | `/api/settings/reset` | same shape as GET, values = backend/.env | - |
 | POST | `/api/roadmap/parse` body `{roadmap_md}` | `{steps:[{index,title,description}], title}` | 422 no steps / bad body |
-| POST | `/api/jobs` body `{provider_id?, arena_url?, model?, project_context?, roadmap_md, cloned_from?}` (provider resolution in "Providers"; model defaults to the provider's default_model, then settings; `cloned_from` = source job id from "Clone job", 422 if unknown) | 201 `{job_id, status:"running"\|"queued", queue_position}` (never 409 - busy means queued) | 422 unknown provider_id, arena_url not http(s), empty model, empty roadmap or no steps |
-| GET | `/api/jobs?status=a,b&limit=n` | most recent first, default 20, `limit` 1-200: `[{job_id,status,created_at,step_total,steps_done,title,model,failed_step,stopped_step,restarted_from,queue_position,queued_at,started_at,finished_at,paused}]` | 422 unknown status / limit out of range |
-| GET | `/api/jobs/{id}` | `{job_id,status,error,failed_step,stopped_step,restarted_from,queue_position,queued_at,started_at,title,created_at,finished_at,arena_url,model,provider,project_context,roadmap_md,step_total,steps_done,steps:[{index,title,description,status,error,artifact_paths}],log:[{ts,level,msg}]}` | 404 |
+| POST | `/api/jobs` body `{provider_id?, arena_url?, model?, project_id?, project_context?, roadmap_md, cloned_from?}` (provider resolution in "Providers"; `project_id` selects an imported Project; `project_context` is additional per-job context; `cloned_from` = source job id from "Clone job", 422 if unknown) | 201 `{job_id, status:"running"\|"queued", queue_position}` (never 409 - busy means queued) | 404 unknown project; 409 project repo/revision unavailable; 422 unknown provider_id, arena_url not http(s), empty model, empty roadmap or no steps |
+| GET | `/api/projects` | latest updated first (max 200): `[{id,name,context,source,repo_id,head,commit_count,created_at,updated_at,job_count}]` | - |
+| POST | `/api/projects` body `{repo_full_name,name?,context?,branch?}` | 201 project shape below; imports the chosen branch (default = GitHub default branch) into managed storage | 404 GitHub repo not found/no access; 409 GitHub not connected; 413 repository >100 MB; 422 invalid owner/repo or branch; 502 unsafe GitHub metadata or git import failure |
+| GET | `/api/projects/{id}` | project shape below, including linked job count | 404 |
+| PUT | `/api/projects/{id}` body: partial `{name?,context?}` (at least one; null is invalid) | updated project shape; name max 100 chars, context max 20,000 | 404; 422 empty/invalid fields or unknown key |
+| POST | `/api/projects/{id}/refresh` | updated project shape; fetches the same selected branch and advances the project's source head | 404; 409 source repo unavailable; GitHub/auth/network errors; 502 git refresh failure |
+| DELETE | `/api/projects/{id}` | `{deleted:true,project_id}` and remove managed source checkout | 404; 409 one or more jobs still link to this project (delete linked jobs first) |
+| GET | `/api/jobs?status=a,b&limit=n` | most recent first, default 20, `limit` 1-200: `[{job_id,status,created_at,step_total,steps_done,title,model,project_id,project_name,failed_step,stopped_step,restarted_from,cloned_from,queue_position,queued_at,started_at,finished_at,paused}]` | 422 unknown status / limit out of range |
+| GET | `/api/jobs/{id}` | `{job_id,status,error,failed_step,stopped_step,restarted_from,cloned_from,project_id,project_name,project_commit,repo_id,queue_position,queued_at,started_at,title,created_at,finished_at,arena_url,model,provider,project_context,roadmap_md,step_total,steps_done,steps:[{index,title,description,status,error,artifact_paths,commit_sha}],log:[{ts,level,msg}]}` | 404 |
 | GET | `/api/jobs/{id}/steps/{index}` | full step: `{job_id,index,title,description,status,prompt,response,error,artifacts:[{path,content}],started_at,finished_at}` | 404 job or step |
 | POST | `/api/jobs/{id}/stop` | `{job_id,status:"stopped",stopped_step,steps_done}` | 404; 409 job not running (queued/paused: cancel it via the queue instead) or finished before the stop took effect |
 | POST | `/api/jobs/{id}/restart` body `{provider_id?, arena_url?, model?}` (optional) | 201 `{job_id, status, queue_position}` of a NEW job (enqueued) | 404; 409 job not finished, or a restart of this job is already queued/paused/running; 422 bad override |
@@ -35,7 +41,7 @@ FastAPI's `{"detail": "..."}` shape.
 | GET | `/api/jobs/{id}/transcript.html` | `text/html; charset=utf-8` attachment `roadmap2arena-<id8>-transcript.html`: standalone (inline CSS, no scripts/external assets), all text HTML-escaped, fenced blocks as `<pre>` | 404 |
 | GET | `/api/jobs/{id}/files` | `[{path,step_index,versions:[step...],size,zip_path,zip_skip_reason}]` latest version per path (done steps), sorted by path | 404 |
 | GET | `/api/jobs/{id}/files/download?path=<p>&step=<n>` | `text/plain; charset=utf-8` attachment (file name = basename); latest version, or the version from step n | 404 job/file/version; 422 missing path, step outside 1..100000 |
-| GET | `/api/jobs/{id}/clone-source` | `{source_job_id,title,arena_url,model,provider,project_context,roadmap_md,step_total}` for the prefilled Clone form | 404 |
+| GET | `/api/jobs/{id}/clone-source` | `{source_job_id,title,arena_url,model,provider,project_id,project_name,project_context,roadmap_md,step_total}` for the prefilled Clone form; `project_context` is the job-specific override when available, not duplicated saved project instructions | 404 |
 | GET | `/api/jobs/{id}/download` | `application/zip`, latest version per path | 404 unknown job; 409 no artifacts |
 | GET | `/api/jobs/{id}/git?limit=1..500` | `{job_id, project_id, job_status, exists, can_init, repo_id, owner:{type,id}, path, default_branch, head, commit_count, uncommitted_steps, commits:[{sha, short_sha, message, step_index, author_name, author_email, date, files_changed, insertions, deletions}], remotes}` newest first; `exists:false` (no repo yet) has `commits:[]` | 404 job, 422 limit |
 | POST | `/api/jobs/{id}/git/init` | create the repo now and commit every done step without a commit (older jobs); same shape + `committed_steps:[N]`; idempotent | 404, 500 git error |
@@ -68,6 +74,53 @@ Statuses: job `queued|paused|running|done|error|stopped|cancelled`; step `pendin
 Finished (history) = `done|error|stopped|cancelled`; resumable = `error|stopped|cancelled`.
 UI labels: done = "Completed", error = "Failed", queued = "Queued" (not started yet).
 `cloned_from` (source job id or null) is on job detail, the job list and queue summaries.
+
+### Projects and pinned source repositories (`backend/project_routes.py`)
+
+Project response shape (also returned inside the projects list):
+
+```text
+{id, name, context,
+ source:{provider:"github", repo_full_name, html_url, private, branch, default_branch,
+         remote_updated_at, size_kb},
+ repo_id, head, commit_count, created_at, updated_at, job_count}
+```
+
+- No GitHub token or clone URL is returned or persisted in the project document. A GitHub
+  token is passed only to one `git clone`/`git fetch` process as a host-scoped HTTP extra
+  header, never in argv, the URL or `.git/config`. Imports require a connected GitHub token
+  with read access; GitHub API errors use the existing GitHub mapping.
+- Import clones one branch shallowly (`--depth=1`, no tags or submodules) into
+  `<R2A_DATA_DIR>/projects/<project_id>`, defaulting to the repository's default branch.
+  `branch` may select another valid branch through the API. The GitHub size metadata limit
+  is 100 MB. The project repo document has owner `{type:"project", id:<project_id>}`.
+- Refresh fetches the project's selected branch, then advances the project head. It is
+  serialized with job creation and project deletion under `scheduler.lock`; jobs already
+  created keep their recorded `project_commit` and independent source copy.
+- `POST /api/jobs` with `project_id` copies the project context plus the supplied
+  `project_context` into the job. Both are retained in `project_context`; when both are
+  non-empty the prompt labels them `PROJECT INSTRUCTIONS` and `ADDITIONAL JOB CONTEXT`.
+  The clone-source API returns the separately stored job-context override, so cloning does
+  not paste saved project instructions twice. Job detail includes `project_id`,
+  `project_name`, `project_commit`, and `repo_id`; list/history rows include project id/name.
+- Every project job gets a non-hardlinked local clone of the immutable `project_commit` tree in
+  `<R2A_DATA_DIR>/repos/<job_id>`, on `main`, with the imported `origin` removed. The checkout
+  is shallow so it does not fetch potentially large upstream history. If the selected commit has
+  unavailable parents, the job repo flattens that boundary to a parentless local base commit
+  (`project_base_commit`) so its history is complete for GitHub pushes and standalone bundles;
+  the original GitHub SHA remains in `project_commit`. Generated steps are committed only to the
+  job repo. Restart preserves both source SHAs and prefers the source job's repo when cloning it,
+  so project refresh cannot invalidate that revision. A project cannot be deleted until all
+  linked jobs are deleted.
+- On the first pending step (including a restart at step 1), `orchestrator.py` reads the
+  committed tree at `project_base_commit` (or `project_commit` when identical), not the mutable
+  working tree. It passes only bounded text content to the first prompt: 60,000 bytes total,
+  20,000 bytes per file.
+  Binary blobs, symlinks/submodules, and common credential/config filename patterns (for
+  example `.env`, `.ssh/`, cloud credentials, private keys and Terraform state) are omitted.
+  This is a filename-based safeguard, not a secret scanner. Files are fenced so their
+  contents cannot terminate the snapshot block and are identified as untrusted project data.
+  The rest of the tree remains available locally in the job repo; it is not in the prompt.
 
 ### Job queue (backend/scheduler.py)
 
@@ -226,8 +279,10 @@ provider job's `arena_url` can be reused as an override).
   request is abandoned; the running step becomes `stopped` (response discarded),
   later steps stay pending, job `stopped` with `finished_at` and a log line. A step
   is only marked done while still `running`, so nothing flips to done afterwards.
-- **Restart** copies arena_url, model, project_context and roadmap_md (with optional
-  overrides) into a new job (`restarted_from` = old id) that runs from step 1.
+- **Restart** copies arena_url, model, project context, roadmap and project identity/source
+  revision (with optional provider/model/URL overrides) into a new job (`restarted_from` = old
+  id) that runs from step 1. A project restart keeps the original `project_commit`, even after
+  the project is refreshed.
 - **Resume** continues the same job from the first non-done step: that step and later
   ones are reset to pending (prompt/response/artifacts/error cleared), job error
   cleared, log "Resumed from step k". The orchestrator rebuilds the chat history from
@@ -242,7 +297,9 @@ Log levels: `info|ok|warn|error`; the job keeps the last 500 entries.
 
 - Every job has its own local repo at `<R2A_DATA_DIR>/repos/<job_id>` (default data dir
   `<repo root>/data`, gitignored - deliberately OUTSIDE `backend/` so uvicorn --reload never sees
-  job files, F-006), branch `main`, created when the job's first run starts. On startup repos
+  job files, F-006), branch `main`. Standalone repos are created at first run; project jobs are
+  cloned from their pinned source commit at submission. Imported sources live at
+  `<R2A_DATA_DIR>/projects/<project_id>`. On startup repos
   left in the old `backend/data/repos` are moved there (only when the new path does not exist;
   `R2A_MIGRATE_LEGACY_DATA=0` disables it, test servers do). Dev reload watches only `backend/`
   minus tests/, data/ and git files: `deploy/supervisor/backend.conf`, `run.sh` (needs watchfiles).
@@ -260,11 +317,14 @@ Log levels: `info|ok|warn|error`; the job keeps the last 500 entries.
 - Git failures are logged (`Git: commit failed - ...`, warn) and never fail the job.
 - git runs via subprocess with argument lists (no shell), no system/global config, hooks off,
   no prompts, `protocol.ext` disabled.
-- Data model (ready for projects): `repos` collection
-  `{id, owner:{type:"job"|"project", id}, kind:"local", path, default_branch, head, commit_count,
-  remotes:[...], created_at, updated_at}`; jobs carry `repo_id` and `project_id` (null = standalone).
-  `repos.snapshot(repo, ref="HEAD", include, exclude, budget_bytes, max_file_bytes)` returns the
-  tree and text file contents at a ref within a byte budget (for future project context).
+- `repos` collection data model: `{id, owner:{type:"job"|"project", id}, kind:"local", path,
+  default_branch, head, commit_count, remotes:[...], created_at, updated_at}`. A project owns
+  the imported source repo; every project job owns a separate job repo and stores `repo_id`,
+  `project_id`, display `project_name`, immutable `project_commit`, and an internal source-job
+  pointer used to preserve a revision on restart. Standalone jobs have null project fields.
+- `repos.snapshot(repo, ref="HEAD", include, exclude, budget_bytes, max_file_bytes)` returns the
+  tree and bounded text contents at a ref. Project prompts read this from the job repo at
+  `project_commit`; credential-like filename patterns are excluded by default for model context.
 - Structured diff (`backend/git_diff.py`, `diff_sync(root, base, head)`): `{base, head, files:[{path,
   old_path, status, additions, deletions, binary, patch, patch_too_large, old_content, new_content,
   context_expandable}], truncated, stats:{files, additions, deletions}}`; old/new content lets the UI
@@ -476,14 +536,21 @@ blocks are never stored as artifacts.
   `cloned_from`), Export transcript (HTML download), Download ZIP, Resume/Restart/Stop,
   and Transcript (chat view from `GET /transcript`) | Files (view, copy, per-file
   download) | Steps | Log tabs.
-- Top-level tabs: Create job | Job queue | Current job | Job history | Settings.
-  URL keeps place: `?tab=create|queue|current|history|settings&job=<id>` (job only for
+- Top-level tabs: Create job | Job queue | Current job | Job history | Projects | Settings.
+  URL keeps place: `?tab=create|queue|current|history|projects|settings&job=<id>` (job only for
   history); a bare `/?job=<id>` opens that job in Job history. The Recent jobs sheet
-  was replaced by Job history.
+  was replaced by Job history. Projects adds `?tab=projects`.
 - Artifact contents and transcript prompt/response are fetched on demand via
   `GET /steps/{index}` (finished steps cached).
 - ZIP via `GET /download`; filename from Content-Disposition.
 - `/?tab=history&job=<id>` deep-links to a job.
+- Projects (`hooks/useProjects.js`: shared cache for `GET /api/projects`): the Projects tab
+  checks GitHub connection, filters the connected account's repositories, imports a source
+  with saved instructions, edits instructions/name, refreshes the selected branch, and guards
+  deletion when jobs are linked. `Use project` selects it in Create job; the project selector
+  and context field are also available in Create/Clone forms. History rows show project names.
+  A cloned job keeps the project selection and per-job context override; submitting it uses the
+  project's current head, while Restart keeps the source job's pinned commit.
 - Providers (`hooks/useProviders.js`: one shared store for `GET /api/providers`, plus a
   per-session model cache): Settings > Providers lists providers (default badge, preset,
   base URL, "key saved", key errors) with Add / Edit / Make default / Delete (two-click

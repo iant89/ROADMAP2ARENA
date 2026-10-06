@@ -220,6 +220,7 @@ export default function HistoryPanel({ selectedId, onSelect, refreshKey, isDeskt
                     <p className="mt-1.5 truncate text-[13px] font-medium">{j.title}</p>
                     <p className="mt-0.5 truncate text-[11.5px] text-muted-foreground">
                       <span className="font-mono">{j.model}</span> via {providerName(j.provider)} - {j.steps_done}/{j.step_total} steps
+                      {j.project_name ? ` · ${j.project_name}` : ''}
                       {j.queue_position ? ` - #${j.queue_position} in queue` : ''}
                     </p>
                   </button>

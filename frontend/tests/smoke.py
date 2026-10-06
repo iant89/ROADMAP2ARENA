@@ -43,6 +43,27 @@ class Fixtures:
         self.settings = deepcopy(CFG)
         self.unexpected = []
         self.requests = []
+        self.github_connected = False
+        self.projects = []
+        self.project_imports = []
+        self.project_repos = [{"full_name": "r2a-tester/existing-repo", "name": "existing-repo", "owner": "r2a-tester",
+                               "private": False, "default_branch": "main", "html_url": "https://github.com/r2a-tester/existing-repo",
+                               "description": "A test repository", "can_push": True, "updated_at": "2026-10-01T00:00:00Z"}]
+        self.providers = [{"id": "local-provider", "name": "Local arena2api", "preset": "arena2api",
+                           "base_url": "http://127.0.0.1:9090/v1", "headers": {}, "default_model": "gpt-4o",
+                           "api_key_set": False, "api_key_error": None, "server_key": False, "is_default": True,
+                           "migrated": True, "created_at": None, "updated_at": None}]
+        self.presets = [
+            {"id": "openai", "label": "OpenAI", "base_url": "https://api.openai.com/v1", "needs_key": True, "hint": "OpenAI API"},
+            {"id": "arena2api", "label": "arena2api (local)", "base_url": "http://127.0.0.1:9090/v1", "needs_key": False, "hint": "Local gateway"},
+            {"id": "custom", "label": "Custom", "base_url": "", "needs_key": False, "hint": "Custom OpenAI-compatible API"},
+        ]
+        self.project = {"id": "project-1", "name": "Existing repo", "context": "Use typed routes.",
+                        "source": {"repo_full_name": "r2a-tester/existing-repo", "html_url": "https://github.com/r2a-tester/existing-repo",
+                                   "private": False, "branch": "main", "default_branch": "main", "remote_updated_at": "2026-10-01T00:00:00Z",
+                                   "size_kb": 1},
+                        "head": "0123456789abcdef0123456789abcdef01234567", "commit_count": 1, "job_count": 0,
+                        "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z"}
 
     def route(self, route):
         request = route.request
@@ -73,6 +94,24 @@ class Fixtures:
             reply({"running": None, "queued": [], "count": 0, "waiting": 0})
         elif path == "/api/jobs" and method == "GET":
             reply([])
+        elif path == "/api/providers" and method == "GET":
+            reply({"providers": self.providers, "default_provider_id": "local-provider", "presets": self.presets,
+                   "encryption": "missing"})
+        elif re.fullmatch(r"/api/providers/[^/]+/models", path) and method == "GET":
+            reply({"models": ["gpt-4o"], "count": 1})
+        elif path == "/api/projects" and method == "GET":
+            reply(self.projects)
+        elif path == "/api/projects" and method == "POST":
+            body = request.post_data_json
+            project = deepcopy(self.project)
+            project["name"] = body.get("name") or "existing-repo"
+            project["context"] = body.get("context", "")
+            project["job_count"] = 0
+            self.projects.append(project)
+            self.project_imports.append(body)
+            reply(project, 201)
+        elif path == "/api/github/repos" and method == "GET":
+            reply({"items": self.project_repos, "total": len(self.project_repos), "truncated": False})
         elif re.fullmatch(r"/api/jobs/[^/]+", path) and method == "GET":
             reply({"detail": "Job not found"}, 404)
         elif path == "/api/roadmap/parse" and method == "POST":
@@ -90,7 +129,8 @@ class Fixtures:
                              "from_addr": "", "to_addrs": [], "events": events,
                              "password_set": False, "password_masked": ""}})
         elif path == "/api/github" and method == "GET":
-            reply({"connected": False, "auth_method": None, "source": None, "encryption": "missing", "env_token": False,
+            reply({"connected": self.github_connected, "auth_method": "pat" if self.github_connected else None,
+                   "source": "settings" if self.github_connected else None, "encryption": "missing", "env_token": False,
                    "token_error": None, "username": None, "name": None, "avatar_url": None, "html_url": None,
                    "scopes": [], "token_type": None, "connected_at": None,
                    "auto_push": {"enabled": False, "private": True},
@@ -134,10 +174,11 @@ def run_viewport(browser, base, width, height):
         def load():
             page.goto(base + "/")
             expect(page.get_by_test_id("model-input")).to_have_value("gpt-4o")
-            expect(page.get_by_test_id("arena-url-input")).to_have_value(CFG["arena_url"])
+            expect(page.get_by_test_id("job-provider-select")).to_have_value("local-provider")
+            expect(page.get_by_test_id("job-provider-base")).to_have_text("http://127.0.0.1:9090/v1")
             expect(page.get_by_test_id("start-job-button")).to_be_disabled()
             expect(page.get_by_test_id("backend-error-banner")).to_have_count(0)
-            for name in ("create", "queue", "current", "history", "settings"):
+            for name in ("create", "queue", "current", "history", "projects", "settings"):
                 tab = page.get_by_test_id(f"tab-{name}")
                 expect(tab).to_be_visible()
                 assert tab.get_attribute("aria-label"), "Tab needs an accessible name"
@@ -150,14 +191,12 @@ def run_viewport(browser, base, width, height):
             page.get_by_test_id("load-sample-button").click()
             expect(page.get_by_test_id("steps-found")).to_have_text(re.compile(r"^[1-9]\d* steps? found$"))
             expect(page.get_by_test_id("start-job-button")).to_be_enabled()
+            expect(page.get_by_test_id("project-selector")).to_have_value("")
             page.get_by_test_id("model-input").fill(" ")
-            expect(page.get_by_test_id("model-error")).to_have_text("Model is required")
+            expect(page.get_by_test_id("job-model-error")).to_have_text("Model is required")
             expect(page.get_by_test_id("model-input")).to_have_attribute("aria-invalid", "true")
             expect(page.get_by_test_id("start-job-button")).to_be_disabled()
-            page.get_by_test_id("arena-url-input").fill("ftp://invalid.test")
-            expect(page.get_by_test_id("arena_url-error")).to_have_text("Use an http:// or https:// URL")
             page.get_by_test_id("model-input").fill("gpt-4o")
-            page.get_by_test_id("arena-url-input").fill(CFG["arena_url"])
             expect(page.get_by_test_id("start-job-button")).to_be_enabled()
             assert ("POST", "/api/jobs") not in fixtures.requests, "Validation must not submit a job"
         flow("sample/inline validation", validation)
@@ -173,6 +212,28 @@ def run_viewport(browser, base, width, height):
                 select_tab(page, name)
                 expect(page.get_by_test_id(empty)).to_be_visible()
                 check_layout(page, width)
+            select_tab(page, "projects")
+            expect(page.get_by_test_id("projects-tab")).to_be_visible()
+            expect(page.get_by_test_id("projects-empty")).to_be_visible()
+            expect(page.get_by_test_id("project-github-disconnected")).to_be_visible()
+            check_layout(page, width)
+            fixtures.github_connected = True
+            page.get_by_test_id("project-check-github").click()
+            repo = page.get_by_test_id("project-repo-select")
+            expect(repo).to_be_enabled()
+            repo.select_option("r2a-tester/existing-repo")
+            expect(page.get_by_test_id("project-import-name")).to_have_value("existing-repo")
+            page.get_by_test_id("project-import-context").fill("Keep the existing API typed.")
+            page.get_by_test_id("project-import-button").click()
+            expect(page.get_by_test_id("project-card-project-1")).to_be_visible()
+            expect(page.get_by_test_id("project-context-preview")).to_have_text("Keep the existing API typed.")
+            assert fixtures.project_imports == [{"repo_full_name": "r2a-tester/existing-repo", "name": "existing-repo",
+                                                 "context": "Keep the existing API typed."}]
+            page.get_by_test_id("project-use-project-1").click()
+            expect(page.get_by_test_id("tab-create")).to_have_attribute("data-state", "active")
+            expect(page.get_by_test_id("project-selector")).to_have_value("project-1")
+            check_layout(page, width)
+            fixtures.github_connected = False
             select_tab(page, "settings")
             expect(page.get_by_test_id("settings-tab")).to_be_visible()
             page.reload()
