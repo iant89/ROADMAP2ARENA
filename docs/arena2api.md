@@ -266,7 +266,9 @@ short-lived listener checks HTTP health, key enforcement and disconnected 503,
 then terminates and verifies the port is closed. No MongoDB or real account is used.
 
 See [the integration report](arena2api-integration-2026-10-02.md) for results and
-remaining gates. A [disposable MongoDB-backed validation path and CI workflow](integration-validation.md)
-are now prepared for the next persistence/lifecycle gate; their real Mongo/Docker
-execution is still pending. Real browser pairing/generation and Ubuntu deployment
+remaining gates. The [disposable MongoDB-backed validation path and CI workflow](integration-validation.md)
+have now been executed: the gate passed against a real throwaway MongoDB 8.0 via
+`TEST_MONGO_URL` (2026-10-03) and the GitHub Actions workflow has run green on
+affected PRs and pushes to `main` since 2026-10-03. Only the local Docker Compose
+launcher remains unexecuted. Real browser pairing/generation and Ubuntu deployment
 remain separately unverified.

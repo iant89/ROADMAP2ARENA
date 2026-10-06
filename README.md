@@ -266,8 +266,11 @@ runs controlled local providers, and removes its Compose project on exit. You ca
 instead supply an explicit disposable loopback `TEST_MONGO_URL`. See the
 [validation guide](docs/integration-validation.md) for setup, coverage and safety.
 The persistence gate has passed against a real throwaway MongoDB 8.0 supplied via
-`TEST_MONGO_URL` (2026-10-03); the Docker Compose path and the CI workflow itself
-have not been executed yet.
+`TEST_MONGO_URL` (2026-10-03), and the CI workflow has executed for real on every
+affected PR and push to `main` since 2026-10-03 (latest green run: PR #16,
+2026-10-06). CI always supplies an explicit `TEST_MONGO_URL`, so the **local
+Docker Compose path is still unexecuted** — see the
+[validation guide](docs/integration-validation.md).
 
 Database integration suites also can be run individually with MongoDB and a local
 arena stand-in. Start the
@@ -285,6 +288,7 @@ export TEST_STUB_URL=http://127.0.0.1:9090
 ./venv/bin/python backend/tests/test_notifications.py
 ./venv/bin/python backend/tests/test_git.py
 ./venv/bin/python backend/tests/test_github.py
+./venv/bin/python backend/tests/test_projects.py
 ./venv/bin/python backend/tests/test_reload_isolation.py
 ```
 
