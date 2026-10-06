@@ -24,12 +24,13 @@ TOKEN = "ghp_validtoken000000000000000000000000"
 STUB_URL = os.environ.get("TEST_STUB_URL", "http://127.0.0.1:9090")
 TMP = tempfile.mkdtemp(prefix="r2a-project-test-")
 GH_ROOT = os.path.join(TMP, "github")
+PROJECT_DATA_DIR = os.path.join(TMP, "data")
 GH_PORT = free_port()
 GH = f"http://127.0.0.1:{GH_PORT}"
 KEY = Fernet.generate_key().decode()
 GH_ENV = {"GITHUB_API_URL": GH, "GITHUB_OAUTH_URL": GH, "GITHUB_OAUTH_CLIENT_ID": "",
           "R2A_GITHUB_TOKEN": "", "R2A_GITHUB_ALLOW_FILE_REMOTES": "1"}
-SRV = IsolatedServer(step_delay=0, extra_env={"R2A_DATA_DIR": os.path.join(TMP, "data"),
+SRV = IsolatedServer(step_delay=0, extra_env={"R2A_DATA_DIR": PROJECT_DATA_DIR,
                                                "R2A_SECRET_KEY": KEY, **GH_ENV})
 BASE = ""
 C = httpx.Client(timeout=60)
@@ -95,7 +96,7 @@ def test_import_persist_and_update_project():
 
     repo_doc = SRV.db().repos.find_one({"owner.type": "project", "owner.id": project["id"]}, {"_id": 0})
     assert repo_doc and repo_doc["head"] == project["head"]
-    root = os.path.join(SRV._data_dir.name, repo_doc["path"])
+    root = os.path.join(PROJECT_DATA_DIR, repo_doc["path"])
     assert os.path.isfile(os.path.join(root, "README.md"))
     remote = git(root, "remote", "get-url", "origin").strip()
     assert TOKEN not in remote
