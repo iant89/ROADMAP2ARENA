@@ -571,10 +571,13 @@ blocks are never stored as artifacts.
 - `test-integration.sh` / `backend/tests/integration.py`: explicit disposable real
   MongoDB gate; optional ephemeral Compose MongoDB, no normal `.env`/database
   fallback. Runs self-contained checks, the new real-gateway job pipeline, and
-  isolated deletion/notifications/Git/GitHub/reload regressions. Reload probes
-  execute in a temporary source copy, not the user's checkout. CI is prepared in
+  isolated deletion/notifications/Git/GitHub/projects/reload regressions. Reload
+  probes execute in a temporary source copy, not the user's checkout. CI is
   `.github/workflows/integration.yml`. Verified against a real throwaway MongoDB
-  8.0 via `TEST_MONGO_URL` (2026-10-03); the Compose path and CI have not run yet. See [validation guide](docs/integration-validation.md).
+  8.0 via `TEST_MONGO_URL` (2026-10-03), and executed for real in CI on affected
+  PRs and pushes to `main` since 2026-10-03 (latest green run: PR #16,
+  2026-10-06). CI supplies an explicit `TEST_MONGO_URL`, so the local Compose
+  path has still not run. See [validation guide](docs/integration-validation.md).
 - `backend/tests/test_gateway_pipeline.py`: seven prepared cases against real
   Mongo + backend + SDK + pinned gateway with only Arena HTTP mocked. Persistence,
   artifacts/Git/export, fail-fast/resume, disconnected recovery, credential trust,

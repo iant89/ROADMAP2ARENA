@@ -1,13 +1,15 @@
 # MongoDB-backed integration validation
 
-**Current status: Mongo-backed execution verified locally; CI not yet executed.**
+**Current status: Mongo-backed execution verified locally (2026-10-03) and in CI
+(2026-10-03 onward); the local Docker Compose path is still unverified.**
 On 2026-10-03 the gate ran against a real throwaway MongoDB 8.0.32 (`mongod` on a
 loopback port, temporary dbpath, inside a network namespace with no outside
 access) via `TEST_MONGO_URL=... ./venv/bin/python backend/tests/integration.py`:
 all suites passed, including the 7 `test_gateway_pipeline.py` cases. Docker
-Compose (`./test-integration.sh` without `TEST_MONGO_URL`) and the GitHub Actions
-workflow were not run there. No mock database is substituted and no live Arena
-session is needed for these tests.
+Compose (`./test-integration.sh` without `TEST_MONGO_URL`) was not run there.
+The GitHub Actions workflow has since executed for real — see
+[GitHub Actions](#github-actions) below. No mock database is substituted and no
+live Arena session is needed for these tests.
 
 Originally (2026-10-02) execution was blocked in the Arena sandbox: there was no
 MongoDB binary or Docker/Podman runtime, and an alternate image route failed TLS.
@@ -71,13 +73,15 @@ change the application's saved defaults, or connect a browser account.
    - the actual pinned arena2api FastAPI gateway with a throwaway HTTP key;
    - **only** the gateway's outbound Arena HTTP replaced with `MockTransport`.
 4. Unless `--pipeline-only` is selected, start the local canned arena stand-in and
-   run isolated deletion, notifications, Git, GitHub-stub, and reload suites.
+   run isolated deletion, notifications, Git, GitHub-stub, projects, and reload
+   suites.
 
 The new pipeline cases cover two-step persistence/chat history/artifacts/Git/ZIP,
 rate-limit failure and resume, disconnected 503 and resume, trusted-URL credential
 boundaries, stop/resume, queue pause/unpause, and database/repository deletion.
 Each case owns a fresh throwaway DB and repo directory and checks their cleanup.
-These cases are **implemented and compiled, not yet run against MongoDB**.
+These cases passed 7/7 against a real throwaway MongoDB 8.0.32 on 2026-10-03 and
+have run in CI since; they are no longer compile-only.
 
 The reload positive-control suite runs in a **temporary source copy**: test source
 changes and the default `data/` directory cannot affect the user's checkout or
@@ -110,10 +114,34 @@ and invokes the same `test-integration.sh` driver with an explicit loopback URI.
 It requests only `contents: read`, does not persist checkout credentials, and pins
 checkout/setup-python actions by commit SHA.
 
-The workflow is available for affected pull requests, pushes to main/the current
-session branch, or manual dispatch **after it is committed/pushed**. No workflow
-run has been triggered, and no commit/push was performed in this task. YAML parsing
-and action commit existence checks passed; execution is still pending.
+The workflow is available for affected pull requests, pushes to `main`, or manual
+dispatch.
+
+**Executed.** The workflow was committed in PR #11 and has run for real since
+2026-10-03, on both `pull_request` and `push` events. Observed runs
+(`gh run list --workflow integration.yml`):
+
+| Date (UTC) | Event / ref | Conclusion |
+| --- | --- | --- |
+| 2026-10-03 | `pull_request` `fix/gateway-review`, `arena/01a0fbd7-roadmap2arena`; `push` `main` (PR #11) | success |
+| 2026-10-03 | `pull_request` `feat/providers` | success |
+| 2026-10-04 | `pull_request` `feat/setup-secret-key`; `push` `main` (PR #14) | success (one `push` for PR #12 cancelled by the concurrency group) |
+| 2026-10-06 | `pull_request` `arena/f24331aa-roadmap2arena`; `push` `main` (PR #16) | success (2 earlier PR attempts failed and were fixed before merge) |
+
+Each run provisions the `mongo:8.0` **service container**, installs the pinned
+requirements, and executes `./test-integration.sh` with
+`TEST_MONGO_URL=mongodb://127.0.0.1:27017/`, then `git diff --check`. Because
+CI always supplies an explicit URI, the successful runs validate the
+**`TEST_MONGO_URL` path, not the Docker Compose launcher**; the Compose path
+(`compose.integration.yml`, random loopback port, tmpfs storage, project teardown)
+is still covered only by mocked launcher checks and has never been executed.
+
+The most recent green run is `37415309769` (push to `main`, 2026-10-06, merge of
+PR #16). At that commit `backend/tests/integration.py` lists `test_projects.py` in
+`REGRESSION_SUITES`, and `test-integration.sh` was invoked without `--pipeline-only`,
+so the Projects regression is part of the DB-backed gate that CI ran. Per-suite
+counts are not quoted here because the run's log archive was not retrievable when
+this was written; only the job-level `success` conclusion was observed.
 
 ## Executed sandbox checks — 2026-10-02
 
@@ -126,7 +154,7 @@ and action commit existence checks passed; execution is still pending.
 | Action SHA references | Both verified through GitHub metadata |
 | Bash syntax, pip consistency, Git whitespace | Pass |
 | `./test-integration.sh --pipeline-only` without Docker/explicit URI | Correctly refuses before starting a test stack |
-| Real Docker/Mongo pipeline and CI run | **BLOCKED / NOT RUN** |
+| Real Docker/Mongo pipeline and CI run | **BLOCKED / NOT RUN** at this date — both have since been resolved elsewhere: real Mongo via `TEST_MONGO_URL` on 2026-10-03, and CI from 2026-10-03 (see [GitHub Actions](#github-actions)). Local Docker Compose remains NOT RUN |
 | Real Arena browser/account/provider delivery | **NOT RUN** |
 
 See `test_result.md` for the final infrastructure case count and appended test log.
