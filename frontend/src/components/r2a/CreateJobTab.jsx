@@ -8,7 +8,7 @@ import RoadmapChecklist from './RoadmapChecklist'
 const PARSE_DEBOUNCE_MS = 250
 
 // Create job tab: the start form plus a live preview of the parsed roadmap steps.
-export default function CreateJobTab({ form, setForm, settings, queue, onCreated, onOpenSettings, onParseError }) {
+export default function CreateJobTab({ form, setForm, settings, queue, onCreated, onOpenSettings, onOpenProjects, onParseError }) {
   const [steps, setSteps] = useState([])
   const [submitting, setSubmitting] = useState(false)
 
@@ -35,7 +35,7 @@ export default function CreateJobTab({ form, setForm, settings, queue, onCreated
   }
 
   const handleLoadSample = () => {
-    setForm((f) => ({ ...f, project_context: SAMPLE_PROJECT_CONTEXT, roadmap_md: SAMPLE_ROADMAP }))
+    setForm((f) => ({ ...f, project_id: '', project_context: SAMPLE_PROJECT_CONTEXT, roadmap_md: SAMPLE_ROADMAP }))
     toast('Sample roadmap loaded', { description: 'Tasky - a FastAPI todo API in 7 steps' })
   }
 
@@ -56,6 +56,7 @@ export default function CreateJobTab({ form, setForm, settings, queue, onCreated
           queueInfo={queue ? { running: Boolean(queue.running), waiting: queue.waiting } : null}
           settings={settings}
           onOpenSettings={onOpenSettings}
+          onOpenProjects={onOpenProjects}
         />
       </section>
       <section className="rounded-xl border border-border bg-paper p-5 lg:p-6" data-testid="roadmap-preview">

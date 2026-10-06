@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Activity, History, ListOrdered, PlusCircle, Settings } from 'lucide-react'
+import { Activity, FolderOpen, History, ListOrdered, PlusCircle, Settings } from 'lucide-react'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -12,6 +12,7 @@ import QueueTab from '@/components/r2a/QueueTab'
 import CurrentJobTab from '@/components/r2a/CurrentJobTab'
 import HistoryTab from '@/components/r2a/HistoryTab'
 import SettingsTab from '@/components/r2a/SettingsTab'
+import ProjectsTab from '@/components/r2a/ProjectsTab'
 import { backendUrl, getSettings } from '@/lib/api'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useQueue } from '@/hooks/useQueue'
@@ -20,7 +21,7 @@ import { useUrlState } from '@/hooks/useUrlState'
 import { useProviders } from '@/hooks/useProviders'
 import { cn } from '@/lib/utils'
 
-const EMPTY_FORM = { provider_id: '', arena_url: '', model: '', project_context: '', roadmap_md: '' }
+const EMPTY_FORM = { provider_id: '', arena_url: '', model: '', project_id: '', project_context: '', roadmap_md: '' }
 
 function Count({ n, testId }) {
   if (!n) return null
@@ -115,6 +116,11 @@ export default function App() {
     else navigate('history', res.id)
   }
 
+  const useProject = (project) => {
+    setForm((f) => ({ ...f, project_id: project.id }))
+    navigate('create')
+  }
+
   const onParseError = useCallback((msg) => setParseError(msg), [])
   const queueCount = queue?.count ?? 0
   const scroll = (node) => (isDesktop ? <ScrollArea className="h-full">{node}</ScrollArea> : node)
@@ -139,6 +145,7 @@ export default function App() {
                 {runningId && <span className="size-1.5 rounded-full bg-amber" aria-label="running" />}
               </TabsTrigger>
               <TabsTrigger value="history" data-testid="tab-history" aria-label="Job history" className="flex-1 justify-center px-2 sm:px-3"><History /><span className="hidden sm:inline">Job history</span></TabsTrigger>
+              <TabsTrigger value="projects" data-testid="tab-projects" aria-label="Projects" className="flex-1 justify-center px-2 sm:px-3"><FolderOpen /><span className="hidden sm:inline">Projects</span></TabsTrigger>
               <TabsTrigger value="settings" data-testid="tab-settings" aria-label="Settings" className="flex-1 justify-center px-2 sm:px-3"><Settings /><span className="hidden sm:inline">Settings</span></TabsTrigger>
             </TabsList>
           </div>
@@ -146,7 +153,7 @@ export default function App() {
             <TabsContent value="create" className={contentCls}>
               {scroll(
                 <CreateJobTab form={form} setForm={setForm} settings={settings} queue={queue} onCreated={handleCreated}
-                  onOpenSettings={() => navigate('settings')} onParseError={onParseError} />,
+                  onOpenSettings={() => navigate('settings')} onOpenProjects={() => navigate('projects')} onParseError={onParseError} />,
               )}
             </TabsContent>
             <TabsContent value="queue" className={contentCls}>
@@ -163,6 +170,9 @@ export default function App() {
               <HistoryTab jobId={historyJobId} onOpen={(id) => navigate('history', id)} onOpenJob={openJob}
                 onOpenQueue={() => navigate('queue')} onQueueChanged={refreshQueue} refreshKey={finishedKey}
                 isDesktop={isDesktop} queue={queue} settings={settings} onCloned={handleCloned} />
+            </TabsContent>
+            <TabsContent value="projects" className={contentCls}>
+              {scroll(<ProjectsTab onUseProject={useProject} onOpenSettings={() => navigate('settings')} />)}
             </TabsContent>
             <TabsContent value="settings" className={contentCls}>
               {scroll(<SettingsTab onSaved={handleSettingsSaved} />)}

@@ -17,7 +17,7 @@ from integration_support import LocalService, ROOT, require_mongo, safe_environm
 # Every listed suite owns an IsolatedServer/throwaway DB. Legacy direct/destructive
 # scripts are deliberately excluded until adapted to the same safety contract.
 REGRESSION_SUITES = (
-    "test_deletion.py", "test_notifications.py", "test_git.py", "test_github.py", "test_reload_isolation.py",
+    "test_deletion.py", "test_notifications.py", "test_git.py", "test_github.py", "test_projects.py", "test_reload_isolation.py",
 )
 SELF_CONTAINED = ("test_core.py", "test_gateway.py", "test_github_client.py", "test_integration_support.py")
 

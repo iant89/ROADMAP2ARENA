@@ -1,8 +1,9 @@
 # ROADMAP2ARENA
 
 Turn a Markdown roadmap into generated files, one step at a time. ROADMAP2ARENA
-sends each step to an OpenAI-compatible **arena2api** gateway in a continuous
-conversation, saves the results in MongoDB, and lets you review or export them.
+sends each step to a configured OpenAI-compatible provider (arena2api is the
+local default) in a continuous conversation, saves the results in MongoDB, and
+lets you review or export them.
 
 **Current state:** a React dashboard with a FastAPI + MongoDB job backend and an
 opt-in, pinned [flay-o/arena2api](https://github.com/flay-o/arena2api) gateway.
@@ -18,6 +19,8 @@ extension. See the [gateway setup and security guide](docs/arena2api.md).
 - Browse job history, transcripts, logs, step details, and generated file versions.
 - Download individual files, a latest-files ZIP, or a standalone HTML transcript.
 - Clone job inputs and permanently delete jobs individually or in bulk.
+- Import GitHub repositories as reusable Projects, save project instructions, refresh sources,
+  and start jobs from independent copies pinned to a specific source commit.
 - Record a local Git commit for every completed step, review/compare diffs, and
   download the repository (including `.git`) or a Git bundle.
 - Connect GitHub using a personal access token or OAuth device flow; push to a new
@@ -30,9 +33,11 @@ extension. See the [gateway setup and security guide](docs/arena2api.md).
 - Run the included real gateway independently or alongside the app, with an
   optional server-only HTTP API key.
 
-Jobs currently have independent repositories. **Projects / importing an existing
-repository as job context is planned, not implemented.** Generated code is stored
-and committed, not executed or automatically validated by this app.
+Project-based jobs keep an immutable source commit and work in an independent job repository;
+refreshing a Project never changes jobs already created from it. On step 1, a bounded text snapshot
+of the pinned source tree can be included as model context, with common credential-like files
+excluded by filename. Generated code is stored and committed, not executed or automatically
+validated by this app.
 
 ## Providers
 
@@ -52,6 +57,30 @@ Create job form then picks a provider and a model (fetched list or free text).
   is exactly `ARENA2API_URL` + `/v1` (such as the migrated provider) uses it, and legacy
   jobs keep the exact-`ARENA2API_URL` rule. A key saved on the provider takes precedence.
 
+## Projects
+
+In **Projects**, connect GitHub, import a repository (up to 100 MB), and save reusable
+instructions. Imports use the repository's default branch by default; the API also accepts an
+explicit branch. You can edit the project name/instructions, refresh that branch from GitHub,
+and choose the project in Create job or Clone job. A project cannot be deleted while jobs still
+reference it; delete those jobs first.
+
+The GitHub token is passed only to the import/refresh Git process through a host-scoped header;
+it is not persisted in the clone URL or `.git/config`. Each job receives its own local clone at
+the project's selected commit, without hardlinks or a remote named `origin`, and commits generated
+steps only to that private job repository. Imports are shallow; if the selected commit has parents
+outside that shallow checkout, the job repo flattens the boundary into a self-contained local base
+commit so exports and pushes to a new repository work without downloading all upstream history.
+The original GitHub SHA remains recorded as the job's `project_commit`. New jobs after a refresh use
+the new commit; existing jobs (including restarts) stay pinned to their original source commit.
+
+On the first pending step, the model receives a snapshot of committed text files from that pinned
+revision, capped at 60 KB total and 20 KB per file. Binary files and symlinks are omitted, as are
+common credential/config filenames (`.env`, private keys, cloud credentials, and similar). This
+is a filename-based safeguard, not a secret scanner: review the files and provider's data policy
+before importing sensitive code. Snapshot file contents are framed as untrusted project data.
+Saved project instructions and per-job additional context are combined for the prompt.
+
 ## Architecture
 
 | Path | Purpose |
@@ -60,7 +89,8 @@ Create job form then picks a provider and a model (fetched list or free text).
 | `frontend/src/lib/api.js` | Browser API adapter, retries, and response mapping |
 | `backend/server.py` | FastAPI job app; routes live under `/api` |
 | `backend/orchestrator.py`, `backend/scheduler.py` | Step execution, lifecycle controls, and single-worker queue |
-| `backend/repos.py`, `backend/git_*` | Local repositories, commits, snapshots, and structured diffs |
+| `backend/project_routes.py`, `backend/repos.py` | GitHub project imports, pinned job clones, bounded source snapshots |
+| `backend/git_*` | Local job commits and structured diffs |
 | `backend/github_*`, `backend/notif*` | GitHub integration and notification delivery |
 | `services/arena2api/` | Unmodified upstream gateway + Chrome/Firefox extensions (Git submodule) |
 | `gateway/`, `run-gateway.sh` | Local configuration and standalone gateway launcher |
@@ -72,9 +102,10 @@ Create job form then picks a provider and a model (fetched list or free text).
 | `test-integration.sh`, `compose.integration.yml` | Disposable MongoDB-backed test stack, never production app data |
 | `.github/workflows/integration.yml` | The same local-only regression on a MongoDB-enabled CI runner |
 
-Runtime repositories live in `data/repos/<job_id>` by default (`data/` is
-Git-ignored). Keep `R2A_DATA_DIR` **outside `backend/`** so generated Python files
-cannot trigger the backend's development reloader.
+Runtime repositories live in `data/repos/<job_id>` (job workspaces) and
+`data/projects/<project_id>` (imported sources) by default (`data/` is Git-ignored).
+Keep `R2A_DATA_DIR` **outside `backend/`** so generated Python files cannot trigger
+the backend's development reloader.
 
 ## Local development
 

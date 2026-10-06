@@ -12,7 +12,7 @@ import StartForm from './StartForm'
 // Form values for a clone: the source's provider when it still exists; a deleted provider falls
 // back to the default provider (with a note); a legacy job keeps its own arena2api URL.
 function formFrom(s, providerData) {
-  const base = { model: s.model, project_context: s.project_context, roadmap_md: s.roadmap_md }
+  const base = { model: s.model, project_id: s.project_id || '', project_context: s.project_context, roadmap_md: s.roadmap_md }
   if (!s.provider) return { ...base, provider_id: '', arena_url: s.arena_url }
   const exists = providerData?.providers.some((p) => p.id === s.provider.id)
   return { ...base, provider_id: exists ? s.provider.id : (providerData?.default_provider_id || ''), arena_url: '' }
@@ -77,7 +77,7 @@ export default function CloneJobSheet({ sourceId, open, onOpenChange, queue, set
     }
   }
 
-  const edited = sourceForm && form && ['provider_id', 'arena_url', 'model', 'project_context', 'roadmap_md']
+  const edited = sourceForm && form && ['provider_id', 'arena_url', 'model', 'project_id', 'project_context', 'roadmap_md']
     .some((k) => (form[k] ?? '') !== (sourceForm[k] ?? ''))
 
   return (

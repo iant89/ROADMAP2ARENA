@@ -181,6 +181,7 @@ async def clone_source(job_id: str):
     """Inputs of a job for a prefilled "Clone job" form; POST /api/jobs with cloned_from to submit."""
     job = await _job_or_404(job_id)
     return {"source_job_id": job_id, "title": job.get("title"), "arena_url": job["arena_url"], "model": job["model"],
-            "provider": job.get("provider"),
-            "project_context": job.get("project_context", ""), "roadmap_md": job.get("roadmap_md", ""),
-            "step_total": job["step_total"]}
+            "provider": job.get("provider"), "project_id": job.get("project_id"),
+            "project_name": job.get("project_name"),
+            "project_context": job.get("project_context_override", job.get("project_context", "")),
+            "roadmap_md": job.get("roadmap_md", ""), "step_total": job["step_total"]}

@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { useProviders } from '@/hooks/useProviders'
+import { useProjects } from '@/hooks/useProjects'
 import { modelError as modelErrorOf, providerError } from '@/lib/providerForm'
 import ProviderModelFields from './ProviderModelFields'
 
@@ -29,8 +30,9 @@ function Field({ id, label, hint, error, children }) {
 const fieldText = 'font-mono text-base sm:text-sm'
 
 // Create job form. Submitting enqueues the job; it starts at once when nothing is running.
-export default function StartForm({ form, onChange, stepCount, onSubmit, onLoadSample, submitting, queueInfo, settings, onOpenSettings, submitLabel = 'Add to queue', legacyUrl = null }) {
+export default function StartForm({ form, onChange, stepCount, onSubmit, onLoadSample, submitting, queueInfo, settings, onOpenSettings, onOpenProjects, submitLabel = 'Add to queue', legacyUrl = null }) {
   const { data: providerData, error: providersError } = useProviders()
+  const { data: projects, error: projectsError } = useProjects()
   const providers = providerData?.providers ?? null
   // Inline errors appear once a field has been edited (avoids a flash before config defaults load).
   const [touched, setTouched] = useState({})
@@ -68,7 +70,25 @@ export default function StartForm({ form, onChange, stepCount, onSubmit, onLoadS
           </p>
         )}
       </div>
-      <Field id="project_context" label="Project context" hint="Sent with step 1">
+      <Field id="project_id" label="Project workspace" hint={onOpenProjects ? (
+        <button type="button" className="font-medium text-foreground underline underline-offset-2" onClick={onOpenProjects}>Manage projects</button>
+      ) : 'Optional imported repository'}>
+        <select
+          id="project_id"
+          data-testid="project-selector"
+          className={cn('h-9 w-full rounded-lg border border-input bg-card px-2.5 text-base sm:text-sm focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50', fieldText)}
+          value={form.project_id || ''}
+          onChange={set('project_id')}
+          disabled={submitting}
+        >
+          <option value="">No project - start from an empty repository</option>
+          {(projects || []).map((project) => (
+            <option key={project.id} value={project.id}>{project.name} - {project.source.repo_full_name} ({project.source.branch})</option>
+          ))}
+        </select>
+        {projectsError && <p className="text-xs text-coral" data-testid="project-list-error">Could not load projects: {projectsError}</p>}
+      </Field>
+      <Field id="project_context" label={form.project_id ? 'Additional job context' : 'Project context'} hint={form.project_id ? 'Added to saved project instructions; sent with step 1' : 'Sent with step 1'}>
         <Textarea
           id="project_context"
           data-testid="project-context-input"

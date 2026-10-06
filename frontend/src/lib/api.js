@@ -113,6 +113,9 @@ function toJobView(dto) {
     stopped_step: dto.stopped_step ?? null,
     restarted_from: dto.restarted_from ?? null,
     cloned_from: dto.cloned_from ?? null,
+    project_id: dto.project_id ?? null,
+    project_name: dto.project_name ?? null,
+    project_commit: dto.project_commit ?? null,
     queue_position: dto.queue_position ?? null,
     queued_at: dto.queued_at ?? null,
     started_at: dto.started_at ?? null,
@@ -139,13 +142,14 @@ export async function parseRoadmap(markdown) {
 }
 
 // Enqueues a job. Resolves to { id, status: 'running'|'queued', queue_position }.
-// cloned_from: source job id when submitted from the "Clone job" form.
+// project_id starts it from a pinned, imported project repository; cloned_from identifies the source form job.
 // provider_id selects a provider; without it, arena_url makes a legacy (provider-less) job and
 // neither uses the default provider (contracts.md "Providers").
-export async function startJob({ provider_id, arena_url, model, project_context, roadmap_md, cloned_from }) {
+export async function startJob({ provider_id, arena_url, model, project_id, project_context, roadmap_md, cloned_from }) {
   const body = { model, project_context, roadmap_md }
   if (provider_id) body.provider_id = provider_id
   else if (arena_url?.trim()) body.arena_url = arena_url.trim()
+  if (project_id) body.project_id = project_id
   if (cloned_from) body.cloned_from = cloned_from
   const res = await request('/jobs', { method: 'POST', body })
   return { id: res.job_id, status: res.status, queue_position: res.queue_position }
@@ -169,6 +173,8 @@ export async function listJobs({ status, limit } = {}) {
     started_at: j.started_at ?? null,
     restarted_from: j.restarted_from ?? null,
     cloned_from: j.cloned_from ?? null,
+    project_id: j.project_id ?? null,
+    project_name: j.project_name ?? null,
     title: j.title || 'Untitled roadmap',
     model: j.model,
     provider: j.provider ?? null,
@@ -394,6 +400,28 @@ export async function compareJobCommits(jobId, head, base) {
 export async function downloadJobRepo(jobId, format = 'zip') {
   const res = await request(`/jobs/${encodeURIComponent(jobId)}/git/download?format=${format}`, { raw: true })
   return saveResponse(res, `roadmap2arena-${jobId.slice(0, 8)}.${format === 'bundle' ? 'bundle' : 'zip'}`)
+}
+
+// ---------------------------------------------------------------- projects
+// Projects import a GitHub repository; each job gets a private clone pinned to the selected commit.
+export async function listProjects() {
+  return request('/projects')
+}
+
+export async function createProject(body) {
+  return request('/projects', { method: 'POST', body })
+}
+
+export async function updateProject(id, patch) {
+  return request(`/projects/${encodeURIComponent(id)}`, { method: 'PUT', body: patch })
+}
+
+export async function refreshProject(id) {
+  return request(`/projects/${encodeURIComponent(id)}/refresh`, { method: 'POST' })
+}
+
+export async function deleteProject(id) {
+  return request(`/projects/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 // ---------------------------------------------------------------- GitHub

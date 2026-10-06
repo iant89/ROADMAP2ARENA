@@ -69,7 +69,7 @@ def _repo(owner, name, private=False, push=True, seed=False):
     full = f"{owner}/{name}"
     STATE["repos"][full] = {"name": name, "full_name": full, "owner": {"login": owner}, "private": private,
                             "default_branch": "main", "html_url": f"https://github.com/{full}",
-                            "clone_url": path, "description": None, "updated_at": "2026-10-01T00:00:00Z",
+                            "clone_url": path, "description": None, "updated_at": "2026-10-01T00:00:00Z", "size": 1,
                             "permissions": {"admin": push, "push": push, "pull": True}}
     return STATE["repos"][full]
 
@@ -91,7 +91,8 @@ def _shallow(name):
     full = f"r2a-tester/{name}"
     return {"name": name, "full_name": full, "owner": {"login": "r2a-tester"}, "private": True, "default_branch": "main",
             "html_url": f"https://github.com/{full}", "clone_url": "/nonexistent", "description": None,
-            "updated_at": "2020-01-01T00:00:00Z", "permissions": {"admin": True, "push": True, "pull": True}}
+            "updated_at": "2020-01-01T00:00:00Z", "size": 0,
+            "permissions": {"admin": True, "push": True, "pull": True}}
 
 
 def auth(request: Request):

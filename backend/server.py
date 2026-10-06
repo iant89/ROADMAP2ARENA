@@ -32,12 +32,14 @@ from notification_routes import router as notification_router
 import notifier
 import deletion_routes
 import git_integration
+import project_routes
 import repos
 from git_integration import router as git_router
 import github_integration
 from github_integration import router as github_router
 from queue_routes import queue_state, router as queue_router
 from provider_routes import router as provider_router
+from project_routes import router as project_router
 from roadmap_parser import parse_roadmap, roadmap_title
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -69,6 +71,7 @@ async def lifespan(_: FastAPI):
     except Exception:  # noqa: BLE001 - never block startup; repos that did not move are reported
         logging.getLogger("roadmap2arena").exception("Data migration from backend/data failed")
     await repos.ensure_indexes(db)
+    await project_routes.ensure_indexes(db)
     await github_integration.ensure_indexes(db)
     if notifier.on_job_finished not in orchestrator.on_job_finished:
         orchestrator.on_job_finished.append(notifier.on_job_finished)
@@ -134,6 +137,7 @@ class ParseRequest(BaseModel):
 class JobCreate(BaseModel):
     arena_url: str | None = None
     model: str | None = None
+    project_id: str | None = None
     project_context: str = ""
     roadmap_md: str = Field(default="")
     cloned_from: str | None = None  # source job id when submitted from "Clone job"
@@ -212,32 +216,51 @@ def validate_overrides(body: JobOverrides | None, job: dict, provider: dict | No
 
 async def insert_job(arena_url: str, model: str, project_context: str, roadmap_md: str,
                      steps: list[dict], restarted_from: str | None = None, cloned_from: str | None = None,
-                     provider: dict | None = None) -> str:
+                     provider: dict | None = None, *, project_id: str | None = None,
+                     project_name: str | None = None, project_commit: str | None = None,
+                     project_base_commit: str | None = None,
+                     project_context_override: str | None = None,
+                     project_source_job_id: str | None = None) -> str:
     """Insert a job at the end of the queue. Call under scheduler.lock."""
     job_id = str(uuid.uuid4())
     ts = now_iso()
-    await db.jobs.insert_one({
+    job = {
         "id": job_id, "status": "queued", "queue_position": await scheduler.end_position(db),
         "queued_at": ts, "started_at": None, "created_at": ts, "updated_at": ts, "finished_at": None,
         "arena_url": arena_url, "model": model, "project_context": project_context,
+        "project_context_override": project_context if project_context_override is None else project_context_override,
         # non-secret provider snapshot {id, name, preset, base_url}; None = legacy arena_url job
         "provider": provider,
         "roadmap_md": roadmap_md, "title": roadmap_title(roadmap_md) or steps[0]["title"],
         "step_total": len(steps), "steps_done": 0, "error": None, "failed_step": None,
         "stopped_step": None, "restarted_from": restarted_from, "cloned_from": cloned_from, "log": [],
-        # project_id: owning project (planned "Projects" feature, None = standalone job);
-        # repo_id: the job's own git repo (repos collection), set when it is created.
-        "project_id": None, "repo_id": None,
-    })
-    await db.steps.insert_many([{
-        "job_id": job_id, "index": s["index"], "title": s["title"], "description": s["description"],
-        "status": "pending", "prompt": "", "response": "", "error": None, "artifacts": [],
-        "started_at": None, "finished_at": None,
-    } for s in steps])
+        # A project job pins an immutable base revision and owns its own private clone.
+        "project_id": project_id, "project_name": project_name, "project_commit": project_commit,
+        "project_base_commit": project_base_commit, "project_source_job_id": project_source_job_id, "repo_id": None,
+    }
+    await db.jobs.insert_one(job)
+    try:
+        await db.steps.insert_many([{
+            "job_id": job_id, "index": s["index"], "title": s["title"], "description": s["description"],
+            "status": "pending", "prompt": "", "response": "", "error": None, "artifacts": [],
+            "started_at": None, "finished_at": None,
+        } for s in steps])
+        if project_id:
+            if not project_commit:
+                raise HTTPException(status_code=409, detail="Project has no committed source revision")
+            await repos.create_job_repo_from_project(db, job_id, project_id, project_commit, project_source_job_id,
+                                                     project_base_commit)
+    except Exception:
+        await db.steps.delete_many({"job_id": job_id})
+        await db.jobs.delete_one({"id": job_id})
+        await repos.remove(db, "job", job_id)
+        raise
     if restarted_from:
         await append_log(db, job_id, "info", f"Restart of job {restarted_from}")
     if cloned_from:
         await append_log(db, job_id, "info", f"Clone of job {cloned_from}")
+    if project_id:
+        await append_log(db, job_id, "info", f"Project: based on {project_name or project_id} at {project_commit[:7]}")
     await append_log(db, job_id, "info", "Added to the queue")
     return job_id
 
@@ -271,6 +294,13 @@ async def parse(body: ParseRequest):
     return {"steps": steps, "title": roadmap_title(body.roadmap_md)}
 
 
+def merge_project_context(project_context: str, job_context: str) -> str:
+    saved, extra = (project_context or "").strip(), (job_context or "").strip()
+    if saved and extra:
+        return f"PROJECT INSTRUCTIONS:\n{saved}\n\nADDITIONAL JOB CONTEXT:\n{extra}"
+    return saved or extra
+
+
 @api.post("/jobs", status_code=201)
 async def create_job(body: JobCreate):
     provider = await resolve_provider(body.provider_id, body.arena_url, use_default=True)
@@ -279,15 +309,35 @@ async def create_job(body: JobCreate):
     if body.cloned_from is not None and not await db.jobs.find_one({"id": body.cloned_from}, {"_id": 1}):
         raise HTTPException(status_code=422, detail=f"cloned_from: job {body.cloned_from} not found")
     async with scheduler.lock:
-        job_id = await insert_job(arena_url, model, body.project_context, body.roadmap_md, steps,
-                                  cloned_from=body.cloned_from, provider=snap)
+        project = None
+        project_commit = None
+        project_context = body.project_context
+        if body.project_id:
+            project = await db.projects.find_one({"id": body.project_id}, {"_id": 0})
+            if not project:
+                raise HTTPException(status_code=404, detail=f"Project {body.project_id} not found")
+            project_repo = await repos.find(db, "project", body.project_id)
+            if not project_repo or not repos.exists_on_disk(project_repo):
+                raise HTTPException(status_code=409, detail="Project repository is unavailable - refresh or re-import it")
+            project_commit = project.get("head") or project_repo.get("head")
+            if not project_commit:
+                raise HTTPException(status_code=409, detail="Project has no committed source revision")
+            project_context = merge_project_context(project.get("context", ""), body.project_context)
+        job_id = await insert_job(
+            arena_url, model, project_context, body.roadmap_md, steps,
+            cloned_from=body.cloned_from, provider=snap,
+            project_id=project.get("id") if project else None,
+            project_name=project.get("name") if project else None,
+            project_commit=project_commit,
+            project_context_override=body.project_context,
+        )
         await scheduler.start_next_locked(db)
         await queued_note(job_id)
         state = await queue_state(job_id)
     return {"job_id": job_id, **state}
 
 
-LIST_FIELDS = ("project_id", "status", "created_at", "step_total", "steps_done", "title", "model", "provider", "failed_step", "stopped_step",
+LIST_FIELDS = ("project_id", "project_name", "status", "created_at", "step_total", "steps_done", "title", "model", "provider", "failed_step", "stopped_step",
                "restarted_from", "cloned_from", "queue_position", "queued_at", "started_at", "finished_at")
 
 
@@ -320,6 +370,8 @@ async def get_job(job_id: str):
         "restarted_from": job.get("restarted_from"),
         "cloned_from": job.get("cloned_from"),
         "project_id": job.get("project_id"),
+        "project_name": job.get("project_name"),
+        "project_commit": job.get("project_commit"),
         "repo_id": job.get("repo_id"),
         "queue_position": job.get("queue_position"),
         "queued_at": job.get("queued_at"),
@@ -394,8 +446,15 @@ async def restart_job(job_id: str, body: JobOverrides | None = None):
                                         {"_id": 0, "id": 1, "status": 1})
         if active:
             raise HTTPException(status_code=409, detail=f"A restart of this job is already {active['status']} (job {active['id']})")
-        new_id = await insert_job(arena_url, model, job.get("project_context", ""), job["roadmap_md"], steps,
-                                  restarted_from=job_id, provider=provider)
+        new_id = await insert_job(
+            arena_url, model, job.get("project_context", ""), job["roadmap_md"], steps,
+            restarted_from=job_id, provider=provider,
+            project_id=job.get("project_id"), project_name=job.get("project_name"),
+            project_commit=job.get("project_commit"),
+            project_base_commit=job.get("project_base_commit"),
+            project_context_override=job.get("project_context_override", job.get("project_context", "")),
+            project_source_job_id=job_id if job.get("project_id") else None,
+        )
         await scheduler.start_next_locked(db)
         await queued_note(new_id)
         state = await queue_state(new_id)
@@ -482,3 +541,4 @@ app.include_router(notification_router)
 app.include_router(git_router)
 app.include_router(github_router)
 app.include_router(provider_router)
+app.include_router(project_router)
